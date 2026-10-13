@@ -16,12 +16,10 @@
       }
     ]
   },
-  "migrations": [
-    {
-      "tag": "v1",
-      "new_sqlite_classes": [
-        "Room"
-      ]
+  "exports": {
+    "Room": {
+      "type": "durable-object",
+      "storage": "sqlite"
     }
-  ]
+  }
 }
