@@ -7,8 +7,8 @@
 - 35 otomatik kural / protokol / SQLite yaşam döngüsü testi geçti.
 - Yerel Wrangler 4.150.0 / workerd üzerinde HTTP ve gerçek WebSocket **101** ile 14 ağ kontrolü geçti. İki istemci aynı server tick’te aynı oyuncu/düşman durumunu aldı; güvenli reconnect ve oda sınırı doğrulandı.
 - `wrangler deploy --dry-run` başarılı: binding’ler, SQLite migration ve Static Assets build’i kabul edildi. Dry-run, canlı deploy değildir.
-- Canlı adres: [LAST BOND](https://last-bond.ahmet728kq.workers.dev/). GitHub `main` Cloudflare Workers Builds'e bağlıdır; arayüz ASSETS binding'i ile yayınlanır. İlk yayın ve iki oyunculu lobi tarayıcıda doğrulandı.
-- v1.1 istemcisi bellek içi DOM/audio testleriyle; gerçek Canvas raster çıktısı ile sınıflar, canavarlar, çayır ve boss uyarıları kontrol edildi. Bu test gerçek tarayıcı veya hoparlörden dinleme yerine geçmez. İki farklı gerçek internet bağlantısından tam maç henüz doğrulanmadı.
+- Canlı adres: [LAST BOND](https://last-bond.ahmet728kq.workers.dev/). GitHub `main` Cloudflare Workers Builds'e bağlıdır; arayüz ASSETS binding'i ile yayınlanır. v1.1 arayüzü, iki oyunculu lobi ve maç açılışı canlı tarayıcıda doğrulandı.
+- v1.1 istemcisi bellek içi DOM/audio testleriyle; gerçek Canvas raster çıktısı ile sınıflar, canavarlar, çayır ve boss uyarıları kontrol edildi. Canlı tarayıcıda iki oyuncuyla maç başlatıldı; can barları, hasar kaybı, XP/yükseltme ve sonuç ekranı görüldü. Ses testi gerçek hoparlörden dinleme yerine geçmez. İki farklı gerçek internet bağlantısından tam maç henüz doğrulanmadı.
 - `benchmark-result.json`: 900 saniye simüle edilmiş yerel Node yük testi; son 150 saniyede sentetik 450 projectile sınır stresi; 150 düşman, iki build, ölçülmüş tick süreleri ve sınırlı entity/pool sayıları. Bu test gerçek zamanlı 15 dakikalık internet maçı veya Cloudflare profili değildir.
 
 ## v1.1 — Çayır kuşatması

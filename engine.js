@@ -39,7 +39,7 @@ export const CLASSES = {
     crit: 0.05,
     weapon: "shield",
     cd: 22,
-    color: "#49e5dc",
+    color: "#9bbe99",
   },
   storm: {
     name: "FIRTINA",
@@ -49,7 +49,7 @@ export const CLASSES = {
     crit: 0.05,
     weapon: "lightning",
     cd: 24,
-    color: "#b190ff",
+    color: "#b7a3cb",
   },
   alchemist: {
     name: "SİMYACI",
@@ -59,7 +59,7 @@ export const CLASSES = {
     crit: 0.05,
     weapon: "poison",
     cd: 30,
-    color: "#91ef83",
+    color: "#c0ce82",
   },
   shadow: {
     name: "GÖLGE",
@@ -69,7 +69,7 @@ export const CLASSES = {
     crit: 0.2,
     weapon: "dagger",
     cd: 18,
-    color: "#ff728d",
+    color: "#d59a95",
   },
 };
 export const WEAPONS = {
@@ -79,7 +79,7 @@ export const WEAPONS = {
     tag: "elektrik",
     damage: 23,
     cd: 1.2,
-    color: "#b79aff",
+    color: "#bca2d2",
   },
   ice: {
     name: "Buz İğneleri",
@@ -87,7 +87,7 @@ export const WEAPONS = {
     tag: "buz",
     damage: 15,
     cd: 0.9,
-    color: "#8ceaff",
+    color: "#b7d8db",
   },
   scythe: {
     name: "Kan Orağı",
@@ -95,7 +95,7 @@ export const WEAPONS = {
     tag: "kan",
     damage: 17,
     cd: 1.5,
-    color: "#ff617d",
+    color: "#d98279",
   },
   meteor: {
     name: "Meteor Yağmuru",
@@ -103,7 +103,7 @@ export const WEAPONS = {
     tag: "ateş · ağır",
     damage: 52,
     cd: 2.8,
-    color: "#ff9e61",
+    color: "#e6aa70",
   },
   shield: {
     name: "Dönen Kalkan",
@@ -111,7 +111,7 @@ export const WEAPONS = {
     tag: "ağır",
     damage: 20,
     cd: 1.4,
-    color: "#52e7d2",
+    color: "#99c4ab",
   },
   roots: {
     name: "Dikenli Kökler",
@@ -119,7 +119,7 @@ export const WEAPONS = {
     tag: "kontrol",
     damage: 22,
     cd: 2,
-    color: "#9ee882",
+    color: "#b5cc80",
   },
   wind: {
     name: "Rüzgar Bıçağı",
@@ -127,7 +127,7 @@ export const WEAPONS = {
     tag: "rüzgar",
     damage: 21,
     cd: 1.6,
-    color: "#d5ffee",
+    color: "#d1dfbe",
   },
   mine: {
     name: "Kara Delik Mayını",
@@ -135,7 +135,7 @@ export const WEAPONS = {
     tag: "ağır",
     damage: 65,
     cd: 3.5,
-    color: "#c777ff",
+    color: "#b893c1",
   },
   dagger: {
     name: "Gölge Hançeri",
@@ -143,7 +143,7 @@ export const WEAPONS = {
     tag: "kritik",
     damage: 19,
     cd: 0.65,
-    color: "#ff8ca7",
+    color: "#d6a6a4",
   },
   bees: {
     name: "Arı Sürüsü",
@@ -151,7 +151,7 @@ export const WEAPONS = {
     tag: "sürü",
     damage: 12,
     cd: 1.1,
-    color: "#ffd977",
+    color: "#e3c581",
   },
   sound: {
     name: "Ses Dalgası",
@@ -159,7 +159,7 @@ export const WEAPONS = {
     tag: "rüzgar",
     damage: 30,
     cd: 1.7,
-    color: "#f4b9ff",
+    color: "#d1b2cb",
   },
   spear: {
     name: "Işık Mızrağı",
@@ -167,7 +167,7 @@ export const WEAPONS = {
     tag: "ışık",
     damage: 35,
     cd: 1.8,
-    color: "#fff3b0",
+    color: "#e9d7a0",
   },
   poison: {
     name: "Zehir Şişesi",
@@ -175,7 +175,7 @@ export const WEAPONS = {
     tag: "ıslak · zehir",
     damage: 14,
     cd: 2,
-    color: "#91ef83",
+    color: "#c0ce82",
   },
 };
 export const PASSIVES = {
@@ -304,7 +304,7 @@ export const ENEMIES = {
     speed: 54,
     damage: 19,
     r: 29,
-    color: "#f6ca75",
+    color: "#d4bc80",
     xp: 22,
   },
   boss: {
@@ -313,7 +313,7 @@ export const ENEMIES = {
     speed: 36,
     damage: B.bossDamage,
     r: 60,
-    color: "#d197ff",
+    color: "#e1a776",
     xp: 0,
   },
 };

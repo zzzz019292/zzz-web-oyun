@@ -1474,14 +1474,15 @@
       addEventListener("resize", resize);
       resize();
       function circle(x, y, r, color, fill = true) {
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        if (fill) {
-          ctx.fillStyle = color;
-          ctx.fill();
-        } else {
-          ctx.strokeStyle = color;
-          ctx.stroke();
+        if (!fill) { pixelRing(x, y, r, color); return; }
+        // Four-pixel scanlines give spells the same stepped outline as the sprites.
+        ctx.fillStyle = color;
+        const step = 4;
+        for (let row = -r; row < r; row += step) {
+          const half = Math.sqrt(Math.max(0, r * r - (row + step / 2) ** 2));
+          const left = Math.round((x - half) / step) * step;
+          const right = Math.round((x + half) / step) * step;
+          ctx.fillRect(left, Math.round((y + row) / step) * step, Math.max(step, right - left), step);
         }
       }
       function glow(x, y, r, color) {
@@ -1806,7 +1807,7 @@
             r: e.r || 70,
             life: 0.7,
             maxLife: 0.7,
-            color: e.color || "#afffe7",
+            color: e.color || "#c3d7a1",
           });
         if (e.type === "cone")
           addFX({ ...e, kind: "cone", life: 0.3, maxLife: 0.3 });
@@ -1824,7 +1825,7 @@
               y: e.y,
               vx: Math.cos(a) * 80,
               vy: Math.sin(a) * 80,
-              color: e.color || "#97dce2",
+              color: e.type === "hurt" ? "#ed9278" : e.color || "#c8d7a0",
               r: 2 + Math.random() * 2,
             });
           }
@@ -2251,7 +2252,7 @@
         if (boss) {
           ctx.fillStyle = "#263426dd";
           ctx.fillRect(width * 0.25, 145, width * 0.5, 8);
-          ctx.fillStyle = "#b995ed";
+          ctx.fillStyle = "#dc9872";
           ctx.fillRect(
             width * 0.25,
             145,
@@ -2259,7 +2260,7 @@
             8,
           );
           ctx.font = "11px monospace";
-          ctx.fillStyle = "#d8c9f4";
+          ctx.fillStyle = "#ead8aa";
           ctx.textAlign = "center";
           ctx.fillText(
             "BOŞLUK EFENDİSİ · " +

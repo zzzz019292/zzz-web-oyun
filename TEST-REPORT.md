@@ -10,7 +10,7 @@ Tarih: 2026-10-14. Kaynak v1.1.0. Wrangler 4.150.0; Node v24.19.0.
 | İstemci JavaScript parse        | Başarılı      | Tüm gömülü JS derlenebilir; görsel render doğrulaması değildir                                              |
 | 18.000 tick yerel yük testi     | Başarılı      | 900 sn simüle zaman; iki build / 150 düşman; son 150 sn sentetik450 mermi stresi                            |
 | Chromium görsel / etkileşim QA  | Tamamlanamadı | Yerel Chromium başlatılamadı; gerçek Canvas çıktısı görsel incelendi, DOM/audio adapter ile istemci akışları test edildi                   |
-| Canlı Cloudflare publish | v1.0 yayında | GitHub bağlantılı Workers Builds; ASSETS ile arayüz ve iki oyunculu lobi doğrulandı. v1.1 aynı hat üzerinden yayınlanır. |
+| Canlı Cloudflare publish | v1.1 yayında | GitHub bağlantılı Workers Builds başarıyla tamamlandı; ASSETS arayüzü, iki oyunculu lobi, maç açılışı ve sonuç ekranı canlı tarayıcıda doğrulandı. |
 | İki ayrı gerçek internetten maç | Yapılmadı     | Üretim kabul testi halen gerekli                                                                            |
 
 ## v1.1 regresyon kontrolleri
