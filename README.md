@@ -7,7 +7,8 @@
 - 28 otomatik kural / protokol / SQLite yaşam döngüsü testi geçti.
 - Yerel Wrangler 4.150.0 / workerd üzerinde HTTP ve gerçek WebSocket **101** ile 14 ağ kontrolü geçti. İki istemci aynı server tick’te aynı oyuncu/düşman durumunu aldı; güvenli reconnect ve oda sınırı doğrulandı.
 - `wrangler deploy --dry-run` başarılı: binding’ler, SQLite migration ve Static Assets build’i kabul edildi. Dry-run, canlı deploy değildir.
-- Canlı Cloudflare bağlantısında hesap / Worker okuma erişimi sağlandı; Static Assets yüklemesi `Unauthorized` döndüğü için canlı yayın **tamamlanmadı**. Mevcut başka Worker değiştirilmedi.
+- 2026-10-14: GitHub `zzzz019292/zzz-web-oyun` main dalındaki eski dosyalar yeni kaynaklarla değiştirildi. Cloudflare’da `last-bond` Worker sunucusu ve iki SQLite Durable Object namespace’i API üzerinden yayınlandı. **HTML Static Assets yüklemesi HTTP401 Unauthorized nedeniyle tamamlanmadı; oyun sitesi henüz oynanmaya hazır değildir.** Mevcut başka Worker değiştirilmedi.
+- Sunucu adresi: `https://last-bond.ahmet728kq.workers.dev`. Arayüz yüklenene kadar kök yol açık bir 503 mesajı gösterir. Bu ortamın dış HTTP erişim kısıtı nedeniyle canlı health/WS testi doğrulanamadı. Normal `npm run deploy`, GitHub kaynaklarından backend + HTML assets birlikte tamamlar.
 - Tarayıcı görsel kontrolü bu çalışma ortamında Chromium başlatma kısıtı nedeniyle tamamlanamadı; istemci JavaScript sözdizimi doğrulandı. İki farklı gerçek internet bağlantısından maç henüz doğrulanmadı. Cloudflare CPU, gerçek GB-s ve 60 FPS garantisi verilmez. Üretim kabul testi aşağıdadır.
 - `benchmark-result.json`: 900 saniye simüle edilmiş yerel Node yük testi; son 150 saniyede sentetik 450 projectile sınır stresi; 150 düşman, iki build, ölçülmüş tick süreleri ve sınırlı entity/pool sayıları. Bu test gerçek zamanlı 15 dakikalık internet maçı veya Cloudflare profili değildir.
 

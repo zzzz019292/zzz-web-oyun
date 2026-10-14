@@ -10,7 +10,7 @@ Tarih: 2026-10-13. Kaynak v1.0.0. Wrangler 4.150.0; Node v24.19.0.
 | İstemci JavaScript parse        | Başarılı      | Tüm gömülü JS derlenebilir; görsel render doğrulaması değildir                                              |
 | 18.000 tick yerel yük testi     | Başarılı      | 900 sn simüle zaman; iki build / 150 düşman; son 150 sn sentetik450 mermi stresi                            |
 | Chromium görsel / etkileşim QA  | Tamamlanamadı | Çalışma ortamında Chromium SIGTRAP / başlatma sorunu; görsel hata yoktur iddiası yapılmaz                   |
-| Canlı Cloudflare publish        | Tamamlanamadı | Static Assets yüklemesi HTTP401 Unauthorized; Worker kodu yayınlanmadı                                      |
+| Canlı Cloudflare publish        | Tamamlanamadı | 2026-10-14 sunucu + SQLite DO API deploy başarılı; HTML Static Assets HTTP401 nedeniyle bekliyor                                      |
 | İki ayrı gerçek internetten maç | Yapılmadı     | Üretim kabul testi halen gerekli                                                                            |
 
 ## Oyun / lifecycle test kapsamı
