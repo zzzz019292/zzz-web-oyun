@@ -1,1 +1,21 @@
-{ "name": "last-bond", "private": true, "scripts": { "dev": "wrangler dev", "deploy": "wrangler deploy" }, "devDependencies": { "wrangler": "^4" } }
+{
+  "name": "last-bond",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.15"
+  },
+  "scripts": {
+    "build:assets": "node scripts/build-assets.mjs",
+    "dev": "npm run build:assets && wrangler dev",
+    "deploy": "npm run build:assets && wrangler deploy",
+    "test": "node --test tests/*.test.mjs",
+    "test:network": "node tests/network.mjs",
+    "bench": "node tests/benchmark.mjs",
+    "check:deploy": "npm run build:assets && wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "wrangler": "4.150.0"
+  }
+}

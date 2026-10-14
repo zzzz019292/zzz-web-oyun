@@ -1,25 +1,31 @@
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
+  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "last-bond",
-  "main": "./worker.js",
+  "main": "worker.js",
   "compatibility_date": "2026-10-13",
+  "workers_dev": true,
   "assets": {
-    "directory": "./public",
+    "directory": "./dist",
     "binding": "ASSETS",
-    "run_worker_first": true
+    "run_worker_first": ["/api/*", "/ws/*"],
   },
   "durable_objects": {
     "bindings": [
-      {
-        "name": "ROOM",
-        "class_name": "Room"
-      }
-    ]
+      { "name": "DIRECTORY", "class_name": "RoomDirectory" },
+      { "name": "ROOMS", "class_name": "GameRoom" },
+    ],
   },
-  "exports": {
-    "Room": {
-      "type": "durable-object",
-      "storage": "sqlite"
-    }
-  }
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RoomDirectory", "GameRoom"] },
+  ],
+  "vars": {
+    "MAX_ACTIVE_ROOMS": "3",
+    "MAX_NEW_ROOMS_PER_DAY": "40",
+    "MAX_PLAYERS_PER_ROOM": "2",
+    "LOBBY_TTL_MINUTES": "5",
+    "RECONNECT_GRACE_SECONDS": "30",
+    "ALLOW_FILE_ORIGIN": "false",
+    "MAX_ENEMIES": "150",
+    "SNAPSHOT_HZ": "10",
+  },
 }

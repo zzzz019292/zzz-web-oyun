@@ -1,0 +1,25 @@
+{
+  "environment": "Node v24.19.0 local CPU; NOT Cloudflare CPU or GB-s",
+  "simulatedSeconds": 900,
+  "ticks": 18000,
+  "targetEnemies": 150,
+  "synthetic450BulletStressSeconds": 150,
+  "maxEnemies": 150,
+  "maxBullets": 450,
+  "meanTickMs": 0.44234382227777874,
+  "p95TickMs": 0.9281639999999243,
+  "p99TickMs": 1.5889160000006086,
+  "maxTickMs": 21.938175999999885,
+  "meanFullBytes": 32641.661111111112,
+  "meanDeltaBytes": 27048.172222222223,
+  "heapStartMB": 7.682456970214844,
+  "heapEndMB": 23.477279663085938,
+  "peakHeapMB": 43.89442443847656,
+  "bounded": {
+    "enemies": 150,
+    "bullets": 423,
+    "loot": 240,
+    "hazards": 4,
+    "pool": 27
+  }
+}

@@ -1,268 +1,956 @@
-// LAST BOND — Cloudflare Worker + Durable Object (sunucu otoriter simülasyon)
-export const CFG = {
-  tickHz: 20, snapEvery: 2, world: 3000, maxEnemies: 150,
-  player: { hp: 100, speed: 210, dashCd: 5, dashTime: 0.15, dashMul: 3.5, crit: 0.05, critMul: 1.5, baseCd: 0.6, dmg: 12 },
-  classes: {
-    tank:   { hp: 130, speed: 1.0,  dr: 0.15, crit: 0, cd: 0.7 },
-    storm:  { hp: 85,  speed: 1.15, dr: 0,    crit: 0, cd: 0.5 },
-    alch:   { hp: 100, speed: 1.0,  dr: 0,    crit: 0, cd: 0.6 },
-    shadow: { hp: 90,  speed: 1.0,  dr: 0,    crit: 0.15, cd: 0.55 },
-  },
-  lastStand: { speed: 0.5, as: 0.5, heal: 0.5, dr: 0.2 },
-  side: { dist: 230, as: 0.1, dr: 0.1 },
-  respawn: { base: 22, step: 4, max: 35, reviveHold: 3, reviveCut: 8, reviveRange: 120, invuln: 2, hpFrac: 0.5 },
-  caps: { as: 3, speed: 2, crit: 0.8, dmg: 6 },
-  xp: { base: 8, perLevel: 6, pickup: 60, pickupBase: 70 },
-  upgradeTime: 12, bossTime: 720, bossHp: 6000,
-  enemies: {
-    walker: { hp: 20, spd: 70,  dmg: 8,  r: 14, xp: 1 },
-    runner: { hp: 10, spd: 150, dmg: 5,  r: 10, xp: 1 },
-    tank:   { hp: 90, spd: 45,  dmg: 14, r: 22, xp: 4 },
-    boss:   { hp: 6000, spd: 55, dmg: 30, r: 70, xp: 0 },
-  },
-};
-const CARDS = [
-  { id: 'dmg', n: 'Keskin Silah', d: '+%20 hasar' }, { id: 'as', n: 'Hızlı Eller', d: '+%15 saldırı hızı' },
-  { id: 'ms', n: 'Rüzgar Ayakkabıları', d: '+%8 hareket hızı' }, { id: 'hp', n: 'Çelik Deri', d: '+20 maks HP' },
-  { id: 'multi', n: 'İkiz Atış', d: '+1 mermi' }, { id: 'pierce', n: 'Delici Uç', d: '+1 delme' },
-  { id: 'crit', n: 'Keskin Odak', d: '+%5 kritik' }, { id: 'mag', n: 'Mıknatıs Kalp', d: '+%30 XP menzili' },
-];
-const rnd = (a, b) => a + Math.random() * (b - a);
-const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-
+import { DurableObject } from "cloudflare:workers";
+import { Game, B, CLASSES } from "./engine.js";
+import { parseMessage, deltaSnapshot } from "./protocol.js";
+const VERSION = "1.0.0";
+const num = (env, k, d) => Math.max(1, Math.min(10000, Number(env[k]) || d));
+const json = (data, status = 200, headers = {}) =>
+  Response.json(data, {
+    status,
+    headers: { "Cache-Control": "no-store", ...headers },
+  });
+const randomToken = () =>
+  Array.from(crypto.getRandomValues(new Uint8Array(24)), (v) =>
+    v.toString(16).padStart(2, "0"),
+  ).join("");
+const digest = async (value) =>
+  Array.from(
+    new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
+    ),
+    (v) => v.toString(16).padStart(2, "0"),
+  ).join("");
+const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+function randomCode() {
+  let code = "";
+  while (code.length < 6)
+    for (const n of crypto.getRandomValues(new Uint8Array(12))) {
+      if (n >= Math.floor(256 / alphabet.length) * alphabet.length) continue;
+      code += alphabet[n % alphabet.length];
+      if (code.length === 6) break;
+    }
+  return code;
+}
+function originAllowed(req, env) {
+  const origin = req.headers.get("Origin");
+  return (
+    !origin ||
+    origin === new URL(req.url).origin ||
+    (origin === "null" && env.ALLOW_FILE_ORIGIN === "true")
+  );
+}
 export default {
   async fetch(req, env) {
-    const u = new URL(req.url);
-    if (u.pathname !== '/ws') return env.ASSETS.fetch(req);
-    if (req.headers.get('Upgrade') !== 'websocket') return new Response('WebSocket gerekli', { status: 426 });
-    let code = (u.searchParams.get('room') || '').toUpperCase();
-    if (u.searchParams.get('mode') === 'create') {
-      const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-      code = Array.from({ length: 6 }, () => A[Math.floor(Math.random() * A.length)]).join('');
+    const u = new URL(req.url),
+      origin = req.headers.get("Origin"),
+      cors =
+        origin === "null" && env.ALLOW_FILE_ORIGIN === "true"
+          ? { "Access-Control-Allow-Origin": "null" }
+          : {};
+    try {
+      if (!originAllowed(req, env))
+        return json({ error: "Bu origin için izin yok." }, 403);
+      if (req.method === "OPTIONS" && u.pathname.startsWith("/api/"))
+        return new Response(null, {
+          status: 204,
+          headers: {
+            ...cors,
+            "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+          },
+        });
+      if (u.pathname === "/api/health" && req.method === "GET")
+        return json(
+          {
+            ok: true,
+            version: VERSION,
+            platform: "Cloudflare SQLite Durable Objects",
+            serverAuthoritative: true,
+          },
+          200,
+          cors,
+        );
+      if (u.pathname === "/api/rooms" && req.method === "POST") {
+        if (Number(req.headers.get("Content-Length") || 0) > 128)
+          return json({ error: "İstek çok büyük." }, 413, cors);
+        const response = await env.DIRECTORY.getByName("global").fetch(
+          "https://internal/create",
+          { method: "POST" },
+        );
+        return new Response(response.body, {
+          status: response.status,
+          headers: { ...Object.fromEntries(response.headers), ...cors },
+        });
+      }
+      const match = u.pathname.match(/^\/ws\/([A-HJ-NP-Z2-9]{6})$/);
+      if (match && req.method === "GET") {
+        if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket")
+          return json({ error: "WebSocket Upgrade gerekli." }, 426);
+        const code = match[1],
+          valid = await env.DIRECTORY.getByName("global").fetch(
+            `https://internal/resolve/${code}`,
+          );
+        if (!valid.ok) return valid;
+        return env.ROOMS.getByName(code).fetch(req);
+      }
+      if (u.pathname.startsWith("/api/") || u.pathname.startsWith("/ws/"))
+        return json({ error: "Oda veya endpoint bulunamadı." }, 404, cors);
+      return env.ASSETS.fetch(req);
+    } catch {
+      return json(
+        {
+          error:
+            "Sunucu yoğun veya ücretsiz kota / kaynak limiti aşıldı. Biraz sonra yeniden deneyin.",
+        },
+        503,
+        cors,
+      );
     }
-    if (!/^[A-Z0-9]{6}$/.test(code)) return new Response('Geçersiz kod', { status: 400 });
-    u.searchParams.set('room', code);
-    return env.ROOM.get(env.ROOM.idFromName(code)).fetch(new Request(u, req));
   },
 };
-
-export class Room {
-  constructor() { this.created = false; this.players = []; this.state = 'LOBBY'; this.timer = null; this.rl = new Map(); }
+export class RoomDirectory extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.sql = ctx.storage.sql;
+    this.sql.exec(
+      "CREATE TABLE IF NOT EXISTS rooms(code TEXT PRIMARY KEY, expires INTEGER NOT NULL)",
+    );
+    this.sql.exec(
+      "CREATE TABLE IF NOT EXISTS daily(day TEXT PRIMARY KEY, count INTEGER NOT NULL)",
+    );
+  }
   async fetch(req) {
-    const u = new URL(req.url), mode = u.searchParams.get('mode'), tok = u.searchParams.get('token');
-    const [c, s] = Object.values(new WebSocketPair()); s.accept();
-    const send = (o) => { try { s.send(JSON.stringify(o)); } catch {} };
-    let p = tok && this.players.find((x) => x.token === tok);
-    if (p) { p.ws = s; p.connected = true; p.dcAt = 0; }
-    else if (mode === 'create' && !this.created) { this.created = true; p = this.addPlayer(s); }
-    else if (mode === 'create') { send({ t: 'error', m: 'Oda kodu çakıştı, tekrar dene.' }); s.close(); return new Response(null, { status: 101, webSocket: c }); }
-    else if (!this.created) { send({ t: 'error', m: 'Yanlış kod: oda bulunamadı.' }); s.close(); return new Response(null, { status: 101, webSocket: c }); }
-    else if (this.players.length >= 2 || this.state !== 'LOBBY') { send({ t: 'error', m: 'Oda dolu.' }); s.close(); return new Response(null, { status: 101, webSocket: c }); }
-    else p = this.addPlayer(s);
-    this.code = u.searchParams.get('room');
-    send({ t: mode === 'create' && !tok ? 'room_created' : 'room_joined', code: this.code, slot: p.slot, token: p.token });
-    this.lobby();
-    s.addEventListener('message', (e) => this.onMsg(p, e.data));
-    s.addEventListener('close', () => { if (p.ws === s) { p.connected = false; p.dcAt = Date.now(); this.lobby(); } });
-    return new Response(null, { status: 101, webSocket: c });
+    const u = new URL(req.url),
+      now = Date.now();
+    this.sql.exec("DELETE FROM rooms WHERE expires<=?", now);
+    this.sql.exec(
+      "DELETE FROM daily WHERE day<?",
+      new Date(now - 86400000).toISOString().slice(0, 10),
+    );
+    if (u.pathname === "/create") {
+      const day = new Date(now).toISOString().slice(0, 10),
+        count =
+          [...this.sql.exec("SELECT count FROM daily WHERE day=?", day)][0]
+            ?.count || 0;
+      if (count >= num(this.env, "MAX_NEW_ROOMS_PER_DAY", 40))
+        return json(
+          {
+            error:
+              "Günlük yeni oda koruması doldu. UTC gece yarısından sonra tekrar deneyin.",
+          },
+          429,
+        );
+      if (
+        [...this.sql.exec("SELECT COUNT(*) AS n FROM rooms")][0].n >=
+        num(this.env, "MAX_ACTIVE_ROOMS", 3)
+      )
+        return json(
+          { error: "Sunucu yoğun: eşzamanlı oda sınırı doldu." },
+          429,
+        );
+      let code;
+      do {
+        code = randomCode();
+      } while (
+        [...this.sql.exec("SELECT code FROM rooms WHERE code=?", code)].length
+      );
+      const expires = now + num(this.env, "LOBBY_TTL_MINUTES", 5) * 60000;
+      this.sql.exec("INSERT INTO rooms VALUES (?,?)", code, expires);
+      this.sql.exec(
+        "INSERT INTO daily VALUES (?,1) ON CONFLICT(day) DO UPDATE SET count=count+1",
+        day,
+      );
+      const id = crypto.randomUUID(),
+        token = randomToken(),
+        hash = await digest(token);
+      try {
+        const r = await this.env.ROOMS.getByName(code).fetch(
+          "https://internal/init",
+          { method: "POST", body: JSON.stringify({ code, expires, id, hash }) },
+        );
+        if (!r.ok) throw Error();
+      } catch {
+        this.sql.exec("DELETE FROM rooms WHERE code=?", code);
+        return json(
+          { error: "Oda başlatılamadı; kaynak limiti olasılığı." },
+          503,
+        );
+      }
+      await this.schedule();
+      return json({ code, id, token, expires }, 201);
+    }
+    if (u.pathname.startsWith("/resolve/")) {
+      const row = [
+        ...this.sql.exec(
+          "SELECT code FROM rooms WHERE code=?",
+          u.pathname.split("/").at(-1),
+        ),
+      ][0];
+      return row
+        ? json({ ok: true })
+        : json({ error: "Oda bulunamadı veya süresi doldu." }, 404);
+    }
+    if (u.pathname === "/lease") {
+      const m = await req.json();
+      this.sql.exec(
+        "UPDATE rooms SET expires=? WHERE code=?",
+        m.expires,
+        m.code,
+      );
+      await this.schedule();
+      return json({ ok: true });
+    }
+    if (u.pathname === "/release") {
+      this.sql.exec("DELETE FROM rooms WHERE code=?", await req.text());
+      await this.schedule();
+      return json({ ok: true });
+    }
+    return json({ error: "Bilinmeyen işlem" }, 404);
   }
-  addPlayer(ws) {
-    const slot = this.players.length;
-    const p = { slot, ws, token: crypto.randomUUID(), connected: true, name: 'Oyuncu ' + (slot + 1), cls: 'tank', ready: false, dcAt: 0 };
-    this.players.push(p); return p;
+  async schedule() {
+    const next = [...this.sql.exec("SELECT MIN(expires) AS t FROM rooms")][0]
+      ?.t;
+    if (next) await this.ctx.storage.setAlarm(next);
+    else await this.ctx.storage.deleteAlarm();
   }
-  bc(o) { const m = JSON.stringify(o); for (const p of this.players) if (p.connected) try { p.ws.send(m); } catch {} }
-  lobby() { this.bc({ t: 'lobby_update', players: this.players.map((p) => ({ slot: p.slot, name: p.name, cls: p.cls, ready: p.ready, connected: p.connected })) }); }
-  onMsg(p, raw) {
-    const now = Date.now(), r = this.rl.get(p.slot) || { n: 0, t: now };
-    if (now - r.t > 1000) { r.n = 0; r.t = now; } if (++r.n > 60) return; this.rl.set(p.slot, r);
-    let m; try { m = JSON.parse(raw); } catch { return; }
-    if (m.t === 'ping') return p.ws.send(JSON.stringify({ t: 'pong', c: m.c }));
-    if (this.state === 'LOBBY') {
-      if (m.t === 'select_character' && CFG.classes[m.cls]) { p.cls = m.cls; const nm=typeof m.name==='string'?m.name.trim().slice(0,12).replace(/[<>&"']/g,''):''; if(nm)p.name=nm; p.ready = false; this.lobby(); }
-      if (m.t === 'ready') { p.ready = !!m.v; this.lobby(); if (this.players.length === 2 && this.players.every((x) => x.ready)) this.start(); }
+  async alarm() {
+    this.sql.exec("DELETE FROM rooms WHERE expires<=?", Date.now());
+    await this.schedule();
+  }
+}
+export class GameRoom extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.sql = ctx.storage.sql;
+    this.sql.exec(
+      "CREATE TABLE IF NOT EXISTS checkpoint(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)",
+    );
+    this.game = null;
+    this.meta = null;
+    this.sessions = [];
+    this.sockets = new Map();
+    this.loop = null;
+    this.previous = null;
+    this.revision = 0;
+    this.lastSave = 0;
+    this.lastSnapshot = 0;
+    this.snapshotHz = Math.min(15, num(env, "SNAPSHOT_HZ", 10));
+    this.costEMA = 0;
+    this.lagEMA = 0;
+    this.adaptAt = 0;
+    this.clockCredit = 0;
+    this.accumulator = 0;
+    ctx.blockConcurrencyWhile(async () => {
+      const row = [
+        ...this.sql.exec("SELECT data FROM checkpoint WHERE id=1"),
+      ][0];
+      if (row) {
+        const cp = JSON.parse(row.data);
+        this.game = Game.restore(cp.game);
+        this.meta = cp.meta;
+        this.sessions = cp.sessions;
+        this.revision = cp.revision || 0;
+        for (const ws of ctx.getWebSockets()) {
+          const a = ws.deserializeAttachment();
+          if (a?.id) {
+            const p = this.game.players.find((p) => p.id === a.id),
+              s = this.sessions.find((s) => s.id === a.id);
+            if (p && s && !s.expired) {
+              this.sockets.set(a.id, ws);
+              p.connected = true;
+              p.seq = Math.max(p.seq, a.seq ?? -1);
+              s.disconnectAt = null;
+            }
+          }
+        }
+        for (const p of this.game.players)
+          if (!this.sockets.has(p.id)) {
+            p.connected = false;
+            const s = this.sessions.find((s) => s.id === p.id);
+            if (s && !s.disconnectAt && this.game.state !== "LOBBY")
+              s.disconnectAt = Date.now();
+          }
+        this.game.runtimeLostMs += Math.max(
+          0,
+          Date.now() - (cp.savedAt || Date.now()),
+        );
+        this.ensureLoop();
+      }
+    });
+  }
+  save() {
+    if (!this.game) return;
+    const cp = JSON.stringify({
+      game: this.game.checkpoint(),
+      meta: this.meta,
+      sessions: this.sessions,
+      revision: this.revision,
+      savedAt: Date.now(),
+    });
+    this.sql.exec(
+      "INSERT INTO checkpoint VALUES (1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+      cp,
+    );
+    this.lastSave = Date.now();
+  }
+  async fetch(req) {
+    const u = new URL(req.url);
+    if (u.pathname === "/init" && req.method === "POST") {
+      if (this.game) return json({ error: "Oda mevcut" }, 409);
+      const m = await req.json();
+      this.meta = {
+        code: m.code,
+        expires: m.expires,
+        createdAt: Date.now(),
+        pauseAt: 0,
+        deadline: 0,
+        ended: false,
+      };
+      this.game = new Game();
+      this.game.enemyCap = Math.min(
+        B.maxEnemies,
+        num(this.env, "MAX_ENEMIES", 150),
+      );
+      const p = this.game.addPlayer(m.id, "Kurucu");
+      p.connected = false;
+      this.sessions = [
+        { id: m.id, hash: m.hash, disconnectAt: null, expired: false },
+      ];
+      this.save();
+      await this.schedule();
+      return json({ ok: true });
+    }
+    if (!this.game || Date.now() >= this.meta.expires)
+      return json({ error: "Oda süresi doldu." }, 404);
+    if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket")
+      return json({ error: "Upgrade gerekli" }, 426);
+    // Allow bounded unauthenticated sockets so a full room can still reconnect securely.
+    if (this.ctx.getWebSockets().length >= 4)
+      return json({ error: "Oda dolu veya bağlantı sınırı aşıldı." }, 409);
+    const pair = new WebSocketPair(),
+      [client, server] = Object.values(pair);
+    this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({
+      id: null,
+      createdAt: Date.now(),
+      window: Date.now(),
+      count: 0,
+      seq: -1,
+      errors: 0,
+    });
+    await this.schedule();
+    return new Response(null, { status: 101, webSocket: client });
+  }
+  send(ws, m) {
+    try {
+      if (ws.readyState === 1 && (Number(ws.bufferedAmount) || 0) < 256000)
+        ws.send(JSON.stringify(m));
+      else if ((Number(ws.bufferedAmount) || 0) >= 256000)
+        ws.close(1013, "Ağ yavaş");
+    } catch {}
+  }
+  broadcast(m) {
+    for (const ws of this.sockets.values()) this.send(ws, m);
+  }
+  error(ws, message) {
+    this.send(ws, { type: "error", message });
+  }
+  async webSocketMessage(ws, raw) {
+    let a = ws.deserializeAttachment() || {},
+      m;
+    try {
+      m = parseMessage(raw);
+    } catch (e) {
+      a.errors = (a.errors || 0) + 1;
+      ws.serializeAttachment(a);
+      this.error(ws, e.message);
+      if (a.errors >= 3) ws.close(1008, "Mesaj doğrulama");
       return;
     }
-    if (m.t === 'input' && p.g) {
-      if (!(m.seq > p.g.seq)) return; p.g.seq = m.seq;
-      const x = Math.max(-1, Math.min(1, +m.x || 0)), y = Math.max(-1, Math.min(1, +m.y || 0));
-      p.g.ix = x; p.g.iy = y; p.g.dash = !!m.dash; p.g.ability = !!m.e; p.g.revive = !!m.f;
+    const now = Date.now();
+    if (now - a.window >= 1000) {
+      a.window = now;
+      a.count = 0;
     }
-    if (m.t === 'choose_upgrade' && this.state === 'UPGRADE_SELECTION' && p.g.offer && p.g.pick == null) {
-      const c = p.g.offer[m.i | 0]; if (c) { p.g.pick = c; this.applyCard(p, c); this.checkUpgradeDone(); }
+    if (++a.count > 18) {
+      ws.close(1008, "Komut sıklığı sınırı");
+      return;
     }
-  }
-  start() {
-    this.state = 'COUNTDOWN'; this.bc({ t: 'countdown', n: 3 });
-    setTimeout(() => this.begin(), 3000);
-  }
-  begin() {
-    const W = CFG.world;
-    this.t = 0; this.level = 1; this.xp = 0; this.kills = 0; this.dmgDone = 0; this.es = []; this.bs = []; this.gs = []; this.ev = []; this.nid = 1; this.spawnAcc = 0; this.tick = 0; this.boss = null; this.bossAcc = 0;
-    for (const p of this.players) {
-      const k = CFG.classes[p.cls];
-      p.g = { x: W / 2 + (p.slot ? 60 : -60), y: W / 2, hp: k.hp, mhp: k.hp, alive: true, resp: 0, deaths: 0, ix: 0, iy: 0, dash: false, dashCd: 0, dashT: 0, seq: 0, cd: 0.3, hit: 0, inv: 0, rev: 0, revUsed: false, revProg: 0,
-        dmg: 1, as: 1, ms: 1, multi: 1, pierce: 0, crit: CFG.player.crit + k.crit, mag: 1, dr: k.dr, offer: null, pick: null, dx: 0, dy: -1, level: {} };
-    }
-    this.state = 'PLAYING'; this.bc({ t: 'game_start', world: W, cfg: { dashCd: CFG.player.dashCd, bossTime: CFG.bossTime } });
-    this.last = Date.now(); this.timer = setInterval(() => this.step(), 1000 / CFG.tickHz);
-  }
-  alive() { return this.players.filter((p) => p.g.alive); }
-  lastStand(p) { return p.g.alive && this.players.length === 2 && !this.players.some((q) => q !== p && q.g.alive); }
-  step() {
-    const dt = 1 / CFG.tickHz; this.tick++;
-    // bağlantı koparsa 30 sn sonra ayrılmış say
-    for (const p of this.players) if (!p.connected && p.dcAt && Date.now() - p.dcAt > 30000) { p.g.ix = p.g.iy = 0; if (p.g.alive) this.kill(p); }
-    if (this.state === 'UPGRADE_SELECTION') {
-      if (Date.now() > this.upDeadline) { for (const p of this.players) if (p.g.pick == null) { p.g.pick = p.g.offer[0]; this.applyCard(p, p.g.offer[0]); } this.checkUpgradeDone(); }
-      if (this.tick % CFG.snapEvery === 0) this.snap(); return;
-    }
-    if (this.state !== 'PLAYING') return;
-    this.t += dt; const P = CFG.player, W = CFG.world;
-    // oyuncular
-    for (const p of this.players) {
-      const g = p.g, k = CFG.classes[p.cls], ls = this.lastStand(p);
-      g.dashCd = Math.max(0, g.dashCd - dt); g.hit = Math.max(0, g.hit - dt); g.inv = Math.max(0, g.inv - dt);
-      const mate = this.players.find((q) => q !== p), near = mate && mate.g.alive && g.alive && dist(g, mate.g) < CFG.side.dist;
-      g.msMul = Math.min(CFG.caps.speed, g.ms * k.speed * (ls ? 1 + CFG.lastStand.speed : 1));
-      g.asMul = Math.min(CFG.caps.as, g.as * (ls ? 1 + CFG.lastStand.as : 1) * (near ? 1 + CFG.side.as : 1));
-      g.drTot = Math.min(0.6, g.dr + (ls ? CFG.lastStand.dr : 0) + (near ? CFG.side.dr : 0));
-      g.ls = ls; g.near = near;
-      let ix = g.ix, iy = g.iy; const l = Math.hypot(ix, iy); if (l > 1) { ix /= l; iy /= l; }
-      if (l > 0.1) { g.dx = ix; g.dy = iy; }
-      let sp = P.speed * g.msMul * (g.alive ? 1 : 0.4);
-      if (g.alive && g.dash && g.dashCd <= 0 && l > 0.1) { g.dashT = P.dashTime; g.dashCd = P.dashCd; g.inv = Math.max(g.inv, 0.2); }
-      if (g.dashT > 0) { g.dashT -= dt; sp *= P.dashMul; }
-      g.x = Math.max(20, Math.min(W - 20, g.x + ix * sp * dt)); g.y = Math.max(20, Math.min(W - 20, g.y + iy * sp * dt));
-      if (!g.alive) { g.resp -= dt; if (g.resp <= 0) this.respawn(p); continue; }
-      // kurtarma
-      g.rev = 0;
-      if (g.revive && mate && !mate.g.alive && !mate.g.revUsed && dist(g, mate.g) < CFG.respawn.reviveRange) {
-        mate.g.revProg += dt; g.rev = mate.g.revProg / CFG.respawn.reviveHold;
-        if (mate.g.revProg >= CFG.respawn.reviveHold) { mate.g.resp = Math.max(0.1, mate.g.resp - CFG.respawn.reviveCut); mate.g.revUsed = true; mate.g.revProg = 0; this.ev.push(['msg', 'Kurtarma başarılı!']); }
-      } else if (mate) mate.g.revProg = 0;
-      // otomatik saldırı
-      g.cd -= dt;
-      if (g.cd <= 0) {
-        let best = null, bd = 520;
-        for (const e of this.es) { const d = dist(g, e); if (d < bd) { bd = d; best = e; } }
-        if (best) {
-          g.cd = k.cd / g.asMul; const a = Math.atan2(best.y - g.y, best.x - g.x), n = g.multi;
-          for (let i = 0; i < n; i++) { const aa = a + (i - (n - 1) / 2) * 0.18;
-            this.bs.push({ x: g.x, y: g.y, vx: Math.cos(aa) * 520, vy: Math.sin(aa) * 520, life: 1.2, dmg: P.dmg * g.dmg, pierce: g.pierce, o: p.slot, crit: g.crit, hit: [] }); }
+    ws.serializeAttachment(a);
+    try {
+      await this.advanceDeadlines();
+      if (
+        !this.game ||
+        (this.meta.ended &&
+          m.type !== "replay" &&
+          m.type !== "ping" &&
+          m.type !== "join" &&
+          m.type !== "leave")
+      )
+        return;
+      if (!a.id) {
+        if (m.type !== "join") {
+          this.error(ws, "Önce oturum doğrulayın.");
+          return;
+        }
+        if (now - a.createdAt > 10000) {
+          ws.close(1008, "Oturum zaman aşımı");
+          return;
+        }
+        let p, s, token;
+        if (m.id || m.token) {
+          s = this.sessions.find((s) => s.id === m.id);
+          if (
+            !s ||
+            s.expired ||
+            typeof m.token !== "string" ||
+            s.hash !== (await digest(m.token))
+          ) {
+            this.error(ws, "Yeniden bağlanma kimliği geçersiz.");
+            ws.close(1008, "Geçersiz token");
+            return;
+          }
+          if (
+            s.disconnectAt &&
+            now - s.disconnectAt >
+              num(this.env, "RECONNECT_GRACE_SECONDS", 30) * 1000 &&
+            this.game.state !== "LOBBY"
+          ) {
+            this.error(ws, "Yeniden bağlanma süresi doldu.");
+            ws.close(1008, "Süre doldu");
+            return;
+          }
+          p = this.game.players.find((p) => p.id === s.id);
+          token = m.token;
+        } else {
+          if (this.game.state !== "LOBBY") {
+            this.error(
+              ws,
+              "Maç başlamış; yalnızca mevcut oturum geri dönebilir.",
+            );
+            ws.close(1008, "Maç başladı");
+            return;
+          }
+          if (
+            this.game.players.length >=
+            Math.min(2, num(this.env, "MAX_PLAYERS_PER_ROOM", 2))
+          ) {
+            this.error(ws, "Oda dolu.");
+            ws.close(1008, "Oda dolu");
+            return;
+          }
+          token = randomToken();
+          s = {
+            id: crypto.randomUUID(),
+            hash: null,
+            disconnectAt: null,
+            expired: false,
+          };
+          p = this.game.addPlayer(s.id, "Savaşçı");
+          p.connected = false;
+          this.sessions.push(s);
+          s.hash = await digest(token);
+        }
+        const old = this.sockets.get(p.id);
+        this.sockets.set(p.id, ws);
+        if (old && old !== ws) old.close(1000, "Oturum yenilendi");
+        p.connected = true;
+        s.disconnectAt = null;
+        p.input = { x: 0, y: 0, f: false };
+        p.name =
+          (m.name || p.name || "Savaşçı").trim().slice(0, 24) || "Savaşçı";
+        a.id = p.id;
+        a.seq = p.seq;
+        ws.serializeAttachment(a);
+        this.send(ws, {
+          type: "room_joined",
+          code: this.meta.code,
+          id: p.id,
+          token,
+          seq: p.seq,
+          catalog: { classes: CLASSES },
+        });
+        this.send(ws, {
+          type: "snapshot",
+          revision: ++this.revision,
+          base: 0,
+          serverTime: now,
+          full: true,
+          data: this.game.snapshot(),
+          metrics: this.metrics(),
+        });
+        this.previous = null;
+        this.save();
+        this.lobby();
+        if (this.game.state === "UPGRADE_SELECTION") this.offer(ws, p.id);
+        this.ensureLoop();
+        await this.schedule();
+        return;
+      }
+      const p = this.game.players.find((p) => p.id === a.id);
+      if (!p || this.sockets.get(a.id) !== ws) return;
+      if (m.type === "ping") {
+        this.send(ws, { type: "pong", time: m.time, serverTime: now });
+        return;
+      }
+      if (m.type === "sync") {
+        this.send(ws, {
+          type: "snapshot",
+          revision: ++this.revision,
+          base: 0,
+          serverTime: now,
+          full: true,
+          data: this.game.snapshot(),
+          metrics: this.metrics(),
+        });
+        this.previous = null;
+        return;
+      }
+      if (
+        m.type === "input" &&
+        ["PLAYING", "BOSS_FIGHT"].includes(this.game.state)
+      ) {
+        if (this.game.input(p.id, m)) {
+          a.seq = p.seq;
+          ws.serializeAttachment(a);
+        }
+        return;
+      }
+      if (m.type === "select_character" && this.game.state === "LOBBY") {
+        if (!CLASSES[m.cls]) {
+          this.error(ws, "Sınıf bulunamadı.");
+          return;
+        }
+        this.game.configure(p, m.cls);
+        p.ready = false;
+        this.save();
+        this.lobby();
+      }
+      if (m.type === "ready" && this.game.state === "LOBBY") {
+        p.ready = m.value;
+        this.save();
+        this.lobby();
+        if (
+          this.game.players.length === 2 &&
+          this.game.players.every((p) => p.ready && p.connected)
+        ) {
+          this.game.state = "COUNTDOWN";
+          this.meta.deadline = now + 3000;
+          this.meta.expires = now + 30 * 60000;
+          this.meta.pauseAt = now;
+          await this.lease();
+          this.save();
+          this.lobby();
         }
       }
-    }
-    // spawn
-    this.spawnAcc += dt * (0.8 + this.t / 60 * 0.9);
-    while (this.spawnAcc >= 1) { this.spawnAcc -= 1; if (this.es.length < CFG.maxEnemies && this.t < CFG.bossTime) this.spawn(); }
-    if (this.t >= CFG.bossTime && !this.boss) this.spawnBoss();
-    // düşmanlar (spatial grid ile ayrışma)
-    const grid = new Map(), cs = 64;
-    for (const e of this.es) { const key = ((e.x / cs) | 0) + ',' + ((e.y / cs) | 0); (grid.get(key) || grid.set(key, []).get(key)).push(e); }
-    for (const e of this.es) {
-      const T = CFG.enemies[e.ty]; let tg = null, td = 1e9;
-      for (const p of this.alive()) { const d = dist(e, p.g); if (d < td) { td = d; tg = p.g; } }
-      if (tg) { const a = Math.atan2(tg.y - e.y, tg.x - e.x); e.x += Math.cos(a) * T.spd * dt; e.y += Math.sin(a) * T.spd * dt; }
-      const cx = (e.x / cs) | 0, cy = (e.y / cs) | 0;
-      for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) for (const o of grid.get((cx + ox) + ',' + (cy + oy)) || []) {
-        if (o === e) continue; const dx = e.x - o.x, dy = e.y - o.y, d = Math.hypot(dx, dy) || 1, m = T.r + CFG.enemies[o.ty].r;
-        if (d < m) { e.x += dx / d * 30 * dt; e.y += dy / d * 30 * dt; } }
-      if (tg) for (const p of this.alive()) if (p.g.hit <= 0 && p.g.inv <= 0 && dist(e, p.g) < T.r + 16) this.hurt(p, T.dmg * (1 + this.t / 240));
-    }
-    // mermiler
-    for (const b of this.bs) {
-      b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
-      for (const e of this.es) {
-        if (e.hp <= 0 || b.life <= 0 || b.hit.includes(e.id)) continue;
-        if (dist(b, e) < CFG.enemies[e.ty].r + 6) {
-          b.hit.push(e.id); const owner = this.players[b.o].g;
-          const crit = Math.random() < Math.min(CFG.caps.crit, b.crit); let d = b.dmg * (crit ? CFG.player.critMul : 1);
-          if (e.mark > 0 && e.markBy !== b.o) d *= 1.15; if (e.markBy != null && e.markBy !== b.o) e.mark = 5;
-          if (e.markBy == null || e.mark <= 0) { e.markBy = b.o; e.mark = 2; } // Ortak Hedef: 2 sn içinde ikinci oyuncu vurursa işaretle
-          else if (e.markBy !== b.o && e.mark > 0) { e.marked = 5; }
-          e.hp -= d; this.dmgDone += d; this.ev.push(['d', e.x | 0, e.y | 0, d | 0, crit ? 1 : 0]);
-          if (b.hit.length > b.pierce) b.life = 0;
-          if (e.hp <= 0) this.killEnemy(e);
+      if (
+        m.type.startsWith("choose_") &&
+        this.game.state === "UPGRADE_SELECTION"
+      ) {
+        if (
+          (this.game.offerKind === "bond") !==
+          (m.type === "choose_bond_card")
+        ) {
+          this.error(ws, "Yanlış seçim türü.");
+          return;
+        }
+        if (this.game.choose(p.id, m.index, m.revision)) {
+          this.send(ws, {
+            type: "choice_ack",
+            revision: m.revision,
+            index: m.index,
+          });
+          if (
+            this.game.players.every(
+              (p) => this.game.choices[p.id] !== undefined,
+            )
+          )
+            this.resume();
+          this.save();
+        } else this.error(ws, "Seçim eski, tekrarlanmış veya geçersiz.");
+      }
+      if (
+        m.type === "replay" &&
+        ["GAME_OVER", "VICTORY"].includes(this.game.state)
+      ) {
+        p.rematch = true;
+        this.lobby();
+        if (this.game.players.every((p) => p.rematch && p.connected)) {
+          const old = this.game;
+          this.game = new Game();
+          this.game.id = old.id;
+          this.game.offerRevision = old.offerRevision;
+          this.game.enemyCap = Math.min(
+            B.maxEnemies,
+            num(this.env, "MAX_ENEMIES", 150),
+          );
+          for (const v of old.players) {
+            const n = this.game.addPlayer(v.id, v.name, v.cls);
+            n.connected = true;
+            n.seq = v.seq;
+          }
+          this.meta.ended = false;
+          this.meta.deadline = 0;
+          this.meta.expires =
+            now + num(this.env, "LOBBY_TTL_MINUTES", 5) * 60000;
+          this.previous = null;
+          await this.lease();
+          this.save();
+          this.publish(true);
+          this.lobby();
         }
       }
-    }
-    for (const e of this.es) { if (e.mark > 0) e.mark -= dt; }
-    this.bs = this.bs.filter((b) => b.life > 0); this.es = this.es.filter((e) => e.hp > 0);
-    // boss
-    if (this.boss && this.boss.hp > 0) { this.bossAcc += dt; if (this.bossAcc > 5) { this.bossAcc = 0; for (let i = 0; i < 6; i++) this.spawn(this.boss.x + rnd(-120, 120), this.boss.y + rnd(-120, 120)); } }
-    // XP kristalleri
-    for (const gm of this.gs) for (const p of this.alive()) { const d = dist(gm, p.g), r = CFG.xp.pickup * p.g.mag + CFG.xp.pickupBase * 0;
-      if (d < r) { gm.x += (p.g.x - gm.x) * 0.3; gm.y += (p.g.y - gm.y) * 0.3; } if (d < 24) { gm.dead = true; this.xp += gm.v; } }
-    this.gs = this.gs.filter((g) => !g.dead);
-    const need = CFG.xp.base + this.level * CFG.xp.perLevel;
-    if (this.xp >= need) { this.xp -= need; this.level++; this.offerUpgrades(); }
-    if (this.tick % CFG.snapEvery === 0) this.snap();
-  }
-  spawn(x, y) {
-    const al = this.alive(); if (!al.length) return; const c = al[(Math.random() * al.length) | 0].g;
-    const a = rnd(0, 6.283), r = rnd(650, 850), W = CFG.world;
-    const ty = this.t > 90 && Math.random() < 0.12 ? 'tank' : Math.random() < 0.25 ? 'runner' : 'walker';
-    const sc = 1 + this.t / 150;
-    x = x ?? Math.max(10, Math.min(W - 10, c.x + Math.cos(a) * r)); y = y ?? Math.max(10, Math.min(W - 10, c.y + Math.sin(a) * r));
-    const hp = CFG.enemies[ty].hp * sc; this.es.push({ id: this.nid++, ty, x, y, hp, mhp: hp, mark: 0, markBy: null });
-  }
-  spawnBoss() {
-    const hp = CFG.bossHp; this.boss = { id: this.nid++, ty: 'boss', x: CFG.world / 2, y: 200, hp, mhp: hp, mark: 0, markBy: null };
-    this.es.push(this.boss); this.bc({ t: 'boss_spawn' });
-  }
-  killEnemy(e) {
-    this.kills++; if (e.ty !== 'boss') this.gs.push({ x: e.x, y: e.y, v: CFG.enemies[e.ty].xp });
-    if (e === this.boss) this.win();
-  }
-  hurt(p, d) {
-    const g = p.g; g.hp -= d * (1 - g.drTot); g.hit = 0.5; g.revProg = 0; this.ev.push(['h', g.x | 0, g.y | 0, p.slot]);
-    if (g.hp <= 0) this.kill(p);
-  }
-  kill(p) {
-    const g = p.g; g.alive = false; g.hp = 0; g.deaths++; g.revUsed = false; g.revProg = 0;
-    g.resp = Math.min(CFG.respawn.max, CFG.respawn.base + CFG.respawn.step * (g.deaths - 1));
-    const mate = this.players.find((q) => q !== p);
-    if (mate && mate.g.alive) { const m = mate.g; m.hp += (m.mhp - m.hp) * CFG.lastStand.heal; this.bc({ t: 'player_down', slot: p.slot }); this.ev.push(['msg', 'SON NÖBET AKTİF!']); }
-    else this.over();
-  }
-  respawn(p) {
-    const g = p.g, mate = this.players.find((q) => q !== p);
-    g.alive = true; g.hp = g.mhp * CFG.respawn.hpFrac; g.inv = CFG.respawn.invuln;
-    if (mate) { g.x = mate.g.x + 50; g.y = mate.g.y; }
-    this.bc({ t: 'player_respawn', slot: p.slot }); this.ev.push(['msg', 'ANKA BAĞI']);
-    for (const e of this.es) { const d = dist(e, g); if (d < 250) { e.x += (e.x - g.x) / (d || 1) * 120; e.y += (e.y - g.y) / (d || 1) * 120; } }
-    for (const q of this.players) q.g.dmg *= 1; // (+%20 hasar penceresi README'de: henüz yok)
-  }
-  offerUpgrades() {
-    this.state = 'UPGRADE_SELECTION'; this.upDeadline = Date.now() + CFG.upgradeTime * 1000;
-    for (const p of this.players) {
-      p.g.pick = null; p.g.offer = [...CARDS].sort(() => Math.random() - 0.5).slice(0, 3);
-      if (p.connected) p.ws.send(JSON.stringify({ t: 'upgrade_offer', cards: p.g.offer, time: CFG.upgradeTime, level: this.level }));
+      if (m.type === "leave") {
+        const s = this.sessions.find((s) => s.id === p.id);
+        if (s) s.expired = true;
+        if (["LOBBY", "COUNTDOWN"].includes(this.game.state)) {
+          await this.destroy("Oyuncu lobiden ayrıldı.");
+          return;
+        }
+        if (
+          ["PLAYING", "BOSS_FIGHT", "UPGRADE_SELECTION"].includes(
+            this.game.state,
+          )
+        ) {
+          this.game.end(false);
+          this.game.event("disconnect", "Bir oyuncu odadan ayrıldı.");
+          this.finish();
+        }
+        ws.close(1000, "Odadan ayrıldı");
+      }
+      await this.schedule();
+    } catch {
+      this.error(ws, "Sunucu kaynak limiti veya geçici işlem hatası.");
+      this.stopLoop();
     }
   }
-  applyCard(p, c) {
-    const g = p.g, id = c.id;
-    if (id === 'dmg') g.dmg = Math.min(CFG.caps.dmg, g.dmg * 1.2); if (id === 'as') g.as = Math.min(CFG.caps.as, g.as * 1.15);
-    if (id === 'ms') g.ms = Math.min(CFG.caps.speed, g.ms * 1.08); if (id === 'hp') { g.mhp += 20; g.hp += 20; }
-    if (id === 'multi') g.multi = Math.min(6, g.multi + 1); if (id === 'pierce') g.pierce = Math.min(6, g.pierce + 1);
-    if (id === 'crit') g.crit = Math.min(CFG.caps.crit, g.crit + 0.05); if (id === 'mag') g.mag *= 1.3;
-    g.level[id] = (g.level[id] || 0) + 1;
+  lobby() {
+    if (!this.game) return;
+    this.broadcast({
+      type: "lobby_update",
+      state: this.game.state,
+      deadline: this.meta.deadline,
+      expires: this.meta.expires,
+      players: this.game.players.map((p) => ({
+        id: p.id,
+        name: p.name,
+        cls: p.cls,
+        ready: p.ready,
+        connected: p.connected,
+        rematch: !!p.rematch,
+      })),
+    });
   }
-  checkUpgradeDone() { if (this.players.every((p) => p.g.pick != null)) { this.state = 'PLAYING'; this.bc({ t: 'upgrade_done' }); } }
-  snap() {
-    const r = (n) => Math.round(n);
-    const msg = { t: 'snapshot', st: this.state, time: +this.t.toFixed(1), lv: this.level, xp: this.xp, need: CFG.xp.base + this.level * CFG.xp.perLevel, kills: this.kills,
-      p: this.players.map((p) => { const g = p.g; return { s: p.slot, c: p.cls, x: r(g.x), y: r(g.y), hp: r(g.hp), m: g.mhp, a: g.alive ? 1 : 0, rs: +g.resp.toFixed(1), ls: g.ls ? 1 : 0, nr: g.near ? 1 : 0, dc: +g.dashCd.toFixed(1), rv: +g.rev.toFixed(2), rp: +(g.revProg / CFG.respawn.reviveHold).toFixed(2), inv: g.inv > 0 ? 1 : 0, seq: g.seq, cn: p.connected ? 1 : 0, w: g.multi }; }),
-      e: this.es.map((e) => [e.id, e.ty === 'walker' ? 0 : e.ty === 'runner' ? 1 : e.ty === 'tank' ? 2 : 3, r(e.x), r(e.y), +(e.hp / e.mhp).toFixed(2), e.mark > 0 ? 1 : 0]),
-      b: this.bs.map((b) => [r(b.x), r(b.y), b.o]), g: this.gs.slice(0, 300).map((g) => [r(g.x), r(g.y)]), ev: this.ev };
-    this.ev = []; this.bc(msg);
+  offer(ws, id) {
+    this.send(ws, {
+      type:
+        this.game.offerKind === "bond" ? "team_upgrade_offer" : "upgrade_offer",
+      kind: this.game.offerKind,
+      revision: this.game.offerRevision,
+      deadline: this.meta.deadline,
+      cards: this.game.offers[id],
+      chosen: this.game.choices[id] !== undefined,
+    });
   }
-  win() { this.end('VICTORY'); }
-  over() { this.end('GAME_OVER'); }
-  end(st) {
-    this.state = st; clearInterval(this.timer);
-    this.bc({ t: 'game_over', victory: st === 'VICTORY', time: this.t | 0, kills: this.kills, dmg: this.dmgDone | 0, deaths: this.players.map((p) => p.g.deaths) });
-    setTimeout(() => { this.state = 'LOBBY'; for (const p of this.players) p.ready = false; this.lobby(); }, 500);
+  resume() {
+    if (this.game.state !== "UPGRADE_SELECTION") return;
+    this.game.resolveOffer();
+    this.game.pausedMs += Date.now() - this.meta.pauseAt;
+    this.meta.pauseAt = 0;
+    this.meta.deadline = 0;
+    this.previous = null;
+    this.publish(true);
+    this.ensureLoop();
+  }
+  ensureLoop() {
+    if (
+      this.loop ||
+      !this.game ||
+      !["PLAYING", "BOSS_FIGHT"].includes(this.game.state) ||
+      !this.sockets.size
+    )
+      return;
+    this.lastMono = performance.now();
+    this.clockCredit = 0;
+    this.accumulator = 0;
+    this.loop = setInterval(() => this.pulse(), 50);
+  }
+  stopLoop() {
+    if (this.loop) {
+      clearInterval(this.loop);
+      this.loop = null;
+    }
+    this.accumulator = 0;
+  }
+  pulse() {
+    const start = performance.now(),
+      now = Date.now();
+    try {
+      if (now >= this.meta.expires) {
+        this.stopLoop();
+        this.ctx.waitUntil(this.destroy());
+        return;
+      }
+      // Deployed Workers clocks can freeze between I/O events. Track timer
+      // steps credited during a frozen clock so the next I/O does not double-count.
+      const observed = Math.max(0, start - this.lastMono);
+      let delta;
+      if (observed > 0) {
+        delta = Math.max(0, observed - this.clockCredit);
+        this.clockCredit = 0;
+        this.lastMono = start;
+      } else {
+        delta = 50;
+        this.clockCredit += 50;
+      }
+      this.lagEMA = this.lagEMA * 0.95 + Math.max(0, delta - 50) * 0.05;
+      this.accumulator += Math.min(delta, 250);
+      if (delta > 250) this.game.runtimeLostMs += delta - 250;
+      let steps = 0;
+      while (this.accumulator >= 50 && steps++ < 4) {
+        this.accumulator -= 50;
+        this.game.step(B.tick);
+        if (!["PLAYING", "BOSS_FIGHT"].includes(this.game.state)) break;
+      }
+      if (this.accumulator > 200) {
+        this.game.runtimeLostMs += this.accumulator;
+        this.accumulator = 0;
+      }
+      this.costEMA = this.costEMA * 0.95 + (performance.now() - start) * 0.05;
+      if (
+        (this.costEMA > 12 || this.lagEMA > 20) &&
+        this.game.enemyCap > 60 &&
+        now >= this.adaptAt
+      ) {
+        this.adaptAt = now + 2000;
+        this.game.enemyCap = Math.max(60, this.game.enemyCap - 10);
+        this.snapshotHz = Math.max(5, this.snapshotHz - 1);
+        this.game.event(
+          "performance",
+          `Yük koruması: düşman sınırı ${this.game.enemyCap}, yayın ${this.snapshotHz} Hz.`,
+        );
+      }
+      if (this.game.state === "UPGRADE_SELECTION") {
+        this.stopLoop();
+        this.meta.pauseAt = now;
+        this.meta.deadline = now + B.upgradeSeconds * 1000;
+        this.save();
+        this.publish(true);
+        for (const [id, ws] of this.sockets) this.offer(ws, id);
+        this.ctx.waitUntil(this.schedule());
+      } else if (["GAME_OVER", "VICTORY"].includes(this.game.state)) {
+        this.finish();
+      } else if (now - this.lastSnapshot >= 1000 / this.snapshotHz)
+        this.publish();
+      if (now - this.lastSave >= 20000) this.save();
+      // Disconnected sessions get bounded protective movement, then the match ends.
+      for (const s of this.sessions)
+        if (
+          s.disconnectAt &&
+          !s.expired &&
+          now - s.disconnectAt >=
+            num(this.env, "RECONNECT_GRACE_SECONDS", 30) * 1000
+        ) {
+          s.expired = true;
+          this.game.end(false);
+          this.game.event(
+            "disconnect",
+            "Bir oyuncunun geri dönüş süresi doldu.",
+          );
+          this.finish();
+          break;
+        }
+    } catch {
+      this.stopLoop();
+      this.broadcast({
+        type: "error",
+        message:
+          "Simülasyon durdu: ücretsiz kaynak limiti veya sunucu hatası. Yeniden bağlanmayı deneyin.",
+      });
+    }
+  }
+  metrics() {
+    return {
+      tickHz: 20,
+      snapshotHz: this.snapshotHz,
+      simulationMs: Math.round(this.costEMA * 100) / 100,
+      timerLagMs: Math.round(this.lagEMA * 100) / 100,
+      cpuMeasurement: "local-only",
+      enemyCap: this.game.enemyCap,
+      loopActive: !!this.loop,
+    };
+  }
+  publish(force = false) {
+    if (!this.game) return;
+    const snap = this.game.snapshot(),
+      full = force || !this.previous || this.game.tick % 100 < 2,
+      delta = deltaSnapshot(full ? null : this.previous, snap),
+      base = this.revision,
+      rev = ++this.revision;
+    this.broadcast({
+      type: "snapshot",
+      revision: rev,
+      base: delta.full ? 0 : base,
+      serverTime: Date.now(),
+      ...delta,
+      metrics: this.metrics(),
+    });
+    if (this.game.events.length)
+      this.broadcast({
+        type: "game_event",
+        events: this.game.events.splice(0),
+      });
+    this.previous = snap;
+    this.lastSnapshot = Date.now();
+  }
+  finish() {
+    if (this.meta.ended) return;
+    this.stopLoop();
+    this.meta.ended = true;
+    this.meta.expires = Date.now() + 2 * 60000;
+    this.meta.deadline = 0;
+    this.save();
+    this.publish(true);
+    this.lobby();
+    this.ctx.waitUntil(this.lease());
+    this.ctx.waitUntil(this.schedule());
+  }
+  async lease() {
+    await this.env.DIRECTORY.getByName("global").fetch(
+      "https://internal/lease",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          code: this.meta.code,
+          expires: this.meta.expires,
+        }),
+      },
+    );
+  }
+  async advanceDeadlines() {
+    if (!this.game) return;
+    const now = Date.now();
+    if (now >= this.meta.expires) {
+      await this.destroy();
+      return;
+    }
+    for (const ws of this.ctx.getWebSockets()) {
+      const a = ws.deserializeAttachment();
+      if (!a?.id && now - a.createdAt >= 10000)
+        ws.close(1008, "Doğrulama zaman aşımı");
+    }
+    let expired = false;
+    for (const s of this.sessions)
+      if (
+        s.disconnectAt &&
+        !s.expired &&
+        now - s.disconnectAt >=
+          num(this.env, "RECONNECT_GRACE_SECONDS", 30) * 1000
+      ) {
+        s.expired = true;
+        expired = true;
+      }
+    if (
+      expired &&
+      !["GAME_OVER", "VICTORY", "LOBBY"].includes(this.game.state)
+    ) {
+      this.game.end(false);
+      this.game.event("disconnect", "Yeniden bağlanma süresi doldu.");
+      this.finish();
+    }
+    if (this.meta.deadline && now >= this.meta.deadline) {
+      if (this.game.state === "COUNTDOWN") {
+        if (this.game.players.every((p) => p.connected && p.ready)) {
+          this.meta.deadline = 0;
+          this.meta.pauseAt = 0;
+          this.game.start(now);
+          this.save();
+          this.publish(true);
+          this.ensureLoop();
+        } else {
+          this.game.state = "LOBBY";
+          this.meta.deadline = 0;
+          for (const p of this.game.players) p.ready = false;
+          this.save();
+          this.lobby();
+        }
+      } else if (this.game.state === "UPGRADE_SELECTION") {
+        this.resume();
+        this.save();
+      }
+    }
+  }
+  async schedule() {
+    if (!this.game) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    const deadlines = [this.meta.expires];
+    if (this.meta.deadline) deadlines.push(this.meta.deadline);
+    for (const s of this.sessions)
+      if (s.disconnectAt && !s.expired)
+        deadlines.push(
+          s.disconnectAt + num(this.env, "RECONNECT_GRACE_SECONDS", 30) * 1000,
+        );
+    for (const ws of this.ctx.getWebSockets()) {
+      const a = ws.deserializeAttachment();
+      if (!a?.id) deadlines.push(a.createdAt + 10000);
+    }
+    await this.ctx.storage.setAlarm(
+      Math.max(Date.now() + 100, Math.min(...deadlines)),
+    );
+  }
+  async alarm() {
+    await this.advanceDeadlines();
+    await this.schedule();
+  }
+  async webSocketClose(ws) {
+    await this.disconnected(ws);
+  }
+  async webSocketError(ws) {
+    try {
+      ws.close(1011, "Bağlantı hatası");
+    } catch {}
+    await this.disconnected(ws);
+  }
+  async disconnected(ws) {
+    const a = ws.deserializeAttachment();
+    if (a?.id && this.sockets.get(a.id) === ws && this.game) {
+      this.sockets.delete(a.id);
+      const p = this.game.players.find((p) => p.id === a.id),
+        s = this.sessions.find((s) => s.id === a.id);
+      if (p) {
+        p.connected = false;
+        p.input = { x: 0, y: 0, f: false };
+      }
+      if (s) s.disconnectAt = Date.now();
+      if (this.game.state === "COUNTDOWN") {
+        this.game.state = "LOBBY";
+        this.meta.deadline = 0;
+        for (const p of this.game.players) p.ready = false;
+      }
+      if (!this.sockets.size) this.stopLoop();
+      this.save();
+      this.lobby();
+    }
+    await this.schedule();
+  }
+  async destroy(reason = "Oda süresi doldu") {
+    this.stopLoop();
+    for (const ws of this.ctx.getWebSockets())
+      try {
+        ws.close(1000, reason);
+      } catch {}
+    this.sockets.clear();
+    const code = this.meta?.code;
+    this.game = null;
+    this.meta = null;
+    this.sessions = [];
+    this.sql.exec("DELETE FROM checkpoint");
+    await this.ctx.storage.deleteAlarm();
+    if (code)
+      await this.env.DIRECTORY.getByName("global").fetch(
+        "https://internal/release",
+        { method: "POST", body: code },
+      );
   }
 }
