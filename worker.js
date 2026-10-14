@@ -94,6 +94,7 @@ export default {
       }
       if (u.pathname.startsWith("/api/") || u.pathname.startsWith("/ws/"))
         return json({ error: "Oda veya endpoint bulunamadı." }, 404, cors);
+      if (!env.ASSETS) return json({error: "Oyun arayüzü henüz yüklenmedi. Static Assets yayını bekleniyor."}, 503);
       return env.ASSETS.fetch(req);
     } catch {
       return json(
