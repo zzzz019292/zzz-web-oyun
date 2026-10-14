@@ -7,6 +7,8 @@ function game(a = "tank", b = "alchemist") {
   g.addPlayer("a", "A", a);
   g.addPlayer("b", "B", b);
   g.start(1000);
+  g.enemies = [];
+  g.swarmAt = 9999;
   g.spawnAt = 9999;
   g.eliteAt = 9999;
   return g;
@@ -259,4 +261,77 @@ test("passive and active slot limits offer no impossible acquisitions", () => {
   );
   g.beginOffer("normal");
   assert.equal(g.offers.a[0].type, "heal");
+});
+
+test('opening ring starts safely, pressure and ranged variety arrive in the first minute', () => {
+  const g = new Game(123); g.addPlayer('a', 'A'); g.addPlayer('b', 'B', 'storm'); g.start();
+  assert.equal(g.enemies.length, 10);
+  for (const e of g.enemies) for (const p of g.players)
+    assert(Math.hypot(e.x - p.x, e.y - p.y) >= 290, 'opening enemy overlaps a player');
+  for (const p of g.players) { p.weapons = {}; p.immuneUntil = 9999; }
+  g.eliteAt = 9999;
+  advance(g, 60);
+  assert(g.enemies.length >= 100, 'opening pressure is still too sparse');
+  assert(g.enemies.some(e => e.type === 'spitter'));
+  assert(g.enemies.some(e => e.type === 'burst'));
+  assert(g.enemies.length <= B.maxEnemies);
+});
+
+test('first miniboss arrives at 70 seconds and attacks have a safe warning', () => {
+  const g = game(); g.eliteAt = 70; g.t = 69.99; g.step();
+  const e = g.enemies.find(e => e.type === 'elite'); assert(e);
+  g.enemies = [e]; g.bullets = []; g.hazards = [];
+  e.x = 1000; e.y = 1000;
+  for (const p of g.players) p.weapons = {};
+  const hp = g.players.map(p => p.hp);
+  g.commanderAttack(e, g.players[0], g.players);
+  assert.equal(e.cast.name, 'DİKEN EZİŞİ');
+  advance(g, .8);
+  assert.deepEqual(g.players.map(p => p.hp), hp, 'damage landed before the warning');
+  advance(g, .3);
+  assert(g.players[0].hp < hp[0]);
+  g.commanderAttack(e, g.players[0], g.players);
+  assert(e.pendingVolley && !e.pendingVolley.ring);
+  assert.equal(e.cast.name, 'TOHUM SALVOSU');
+  g.commanderAttack(e, g.players[0], g.players);
+  assert.equal(e.pendingSummon.count, 3);
+});
+
+test('boss rotates four attacks; charge and volleys are warned, rage survives checkpoints', () => {
+  const g = game(); g.enemies = []; g.bullets = []; g.hazards = [];
+  for (const p of g.players) { p.weapons = {}; p.immuneUntil = 9999; }
+  const e = g.spawn('boss', 1000, 1000); e.at = 9999;
+  g.commanderAttack(e, g.players[0], g.players);
+  assert.equal(e.cast.name, 'KÖK KIRILMASI');
+  g.commanderAttack(e, g.players[0], g.players);
+  assert.equal(e.cast.name, 'YIKICI HÜCUM');
+  assert(g.snapshot().enemies[0].charge);
+  const x = e.x; advance(g, .8); assert(Math.abs(e.x - x) < 40);
+  advance(g, .35); assert(e.x > x + 40, 'warned charge did not fire');
+  g.commanderAttack(e, g.players[0], g.players);
+  assert.equal(e.cast.name, 'DİKEN ÇEMBERİ');
+  assert.equal(g.bullets.length, 0);
+  advance(g, 1.1); assert.equal(g.bullets.length, 12);
+  g.commanderAttack(e, g.players[0], g.players);
+  assert.equal(e.cast.name, 'KARANLIK ÇAĞRI');
+  advance(g, 1.4); assert(g.enemies.length >= 5);
+  e.hp = e.maxHP * .4;
+  g.commanderAttack(e, g.players[0], g.players);
+  assert(e.enraged); assert.equal(g.hazards.filter(h => !h.fired).length, 6);
+  const restored = Game.restore(g.checkpoint());
+  assert.deepEqual(restored.snapshot(), g.snapshot());
+  const phaseCount = g.events.filter(v => v.type === 'boss_phase').length;
+  g.commanderAttack(e, g.players[0], g.players);
+  assert.equal(g.events.filter(v => v.type === 'boss_phase').length, phaseCount);
+});
+
+test('small hits identify the player and flash red; shield and invulnerability do not fake damage', () => {
+  const g = game(), p = g.players[0];
+  g.hurt(p, 1);
+  assert(g.snapshot().players[0].hurt);
+  const event = g.events.find(e => e.type === 'hurt'); assert.equal(event.player, p.id);
+  const hp = p.hp; g.hurt(p, 15); assert.equal(p.hp, hp);
+  advance(g, .45); assert(!g.snapshot().players[0].hurt);
+  p.shield = 50; g.hurt(p, 5); assert.equal(p.hp, hp);
+  assert(!g.snapshot().players[0].hurt);
 });

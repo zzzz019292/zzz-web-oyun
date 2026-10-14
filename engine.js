@@ -238,7 +238,7 @@ export const ENEMIES = {
   rot: {
     name: "Çürük",
     hp: 32,
-    speed: 60,
+    speed: 78,
     damage: 7,
     r: 15,
     color: "#89ad9c",
@@ -247,7 +247,7 @@ export const ENEMIES = {
   runner: {
     name: "Koşucu",
     hp: 22,
-    speed: 128,
+    speed: 142,
     damage: 6,
     r: 11,
     color: "#d79cac",
@@ -299,7 +299,7 @@ export const ENEMIES = {
     xp: 4,
   },
   elite: {
-    name: "Elite",
+    name: "DİKEN MUHAFIZI",
     hp: 650,
     speed: 54,
     damage: 19,
@@ -385,7 +385,8 @@ export class Game {
       synergies: {},
       noticeAt: {},
       spawnAt: 0,
-      eliteAt: 180,
+      eliteAt: 70,
+      swarmAt: 24,
       enemyCap: B.maxEnemies,
       bossSpawned: false,
       offerRevision: 0,
@@ -427,6 +428,7 @@ export class Game {
       shield: 0,
       shieldUntil: 0,
       immuneUntil: 0,
+      hurtUntil: 0,
       damage: 0,
       last: false,
       reviveProgress: 0,
@@ -455,7 +457,17 @@ export class Game {
   start(now = Date.now()) {
     this.state = "PLAYING";
     this.startedAt = now;
-    this.event("game_start", "Son bağınız sınanıyor.");
+    // An evenly spaced opening ring gives immediate action without spawning
+    // enemies on top of either player. Normal reinforcements follow shortly.
+    const x = this.players.reduce((n, p) => n + p.x, 0) / this.players.length;
+    const y = this.players.reduce((n, p) => n + p.y, 0) / this.players.length;
+    for (let i = 0; i < 10; i++) {
+      const a = (i * Math.PI * 2) / 10;
+      const r = 335 + this.rand() * 45;
+      this.spawn(i % 4 === 0 ? "runner" : "rot", x + Math.cos(a) * r, y + Math.sin(a) * r);
+    }
+    this.spawnAt = 0.6;
+    this.event("game_start", "ÇAYIR KUŞATMASI · Bağınızı koruyun!");
   }
   event(type, text, data = {}) {
     this.events.push({ id: this.id++, type, text, ...data });
@@ -600,7 +612,8 @@ export class Game {
     p.hp -= value;
     p.reviveProgress = 0;
     p.immuneUntil = this.t + 0.4;
-    this.event("hurt", "", { x: p.x, y: p.y, value: Math.round(value) });
+    p.hurtUntil = this.t + 0.32;
+    this.event("hurt", "", { player: p.id, x: p.x, y: p.y, value: Math.round(value) });
     if (p.hp <= 0) this.down(p);
   }
   down(p) {
@@ -636,6 +649,7 @@ export class Game {
     p.x = clamp((q?.x || p.x) + 45, 20, B.world - 20);
     p.y = q?.y || p.y;
     p.immuneUntil = this.t + 2;
+    p.hurtUntil = 0;
     p.reviveProgress = 0;
     for (const v of this.players) {
       v.last = false;
@@ -661,14 +675,16 @@ export class Game {
   spawn(type, x, y) {
     if (this.enemies.length >= this.enemyCap && type !== "boss") return;
     const c = ENEMIES[type],
-      q = this.players.find((p) => !p.dead) || this.players[0],
+      living = this.players.filter((p) => !p.dead),
+      q = living[Math.floor(this.rand() * living.length)] || this.players[0],
       a = this.rand() * Math.PI * 2,
+      range = this.t < 120 ? 440 : 580,
       scale = type === "boss" ? 1 : 1 + this.t / 650;
     const e = {
       id: this.id++,
       type,
-      x: x ?? clamp(q.x + Math.cos(a) * 650, 35, B.world - 35),
-      y: y ?? clamp(q.y + Math.sin(a) * 650, 35, B.world - 35),
+      x: x ?? clamp(q.x + Math.cos(a) * range, 35, B.world - 35),
+      y: y ?? clamp(q.y + Math.sin(a) * range, 35, B.world - 35),
       hp: c.hp * scale,
       maxHP: c.hp * scale,
       r: c.r,
@@ -683,9 +699,46 @@ export class Game {
       rootUntil: 0,
       fireSpreadAt: 0,
       statusAt: 0,
+      attackCycle: 0,
     };
     this.enemies.push(e);
     return e;
+  }
+  commanderAttack(e, target, alive) {
+    const boss = e.type === "boss", c = ENEMIES[e.type];
+    const rage = boss && e.hp <= e.maxHP * 0.5;
+    if (rage && !e.enraged) {
+      e.enraged = true;
+      this.event("boss_phase", "BOŞLUK ÖFKESİ · İkinci evre!", { x: e.x, y: e.y });
+    }
+    // Cycle through distinct, readable attacks instead of randomly repeating.
+    const mode = e.attackCycle++ % (boss ? 4 : 3);
+    const name = boss
+      ? ["KÖK KIRILMASI", "YIKICI HÜCUM", "DİKEN ÇEMBERİ", "KARANLIK ÇAĞRI"][mode]
+      : ["DİKEN EZİŞİ", "TOHUM SALVOSU", "ORMAN ÇAĞRISI"][mode];
+    e.cast = { name, until: this.t + (mode === 3 ? 1.3 : 1) };
+    this.event("boss_attack", name, { enemy: e.id, x: e.x, y: e.y });
+    if (mode === 0) {
+      for (const p of alive) {
+        this.hazard(p.x, p.y, boss ? (rage ? 110 : 85) : 70, 1, c.damage, "enemy", null);
+        if (rage) {
+          // A delayed second bloom makes staying in the first impact unsafe.
+          this.hazard(p.x + 110, p.y, 65, 1.7, c.damage * 0.8, "enemy", null);
+          this.hazard(p.x - 110, p.y, 65, 1.7, c.damage * 0.8, "enemy", null);
+        }
+      }
+    } else if (boss && mode === 1) {
+      const d = distance(e, target) || 1;
+      e.pendingCharge = { dx: (target.x - e.x) / d, dy: (target.y - e.y) / d,
+        at: this.t + 1, until: this.t + 1.75 };
+    } else if (mode === (boss ? 2 : 1)) {
+      e.pendingVolley = { at: this.t + 1, angle: Math.atan2(target.y - e.y, target.x - e.x),
+        count: boss ? (rage ? 16 : 12) : 5, ring: boss, damage: c.damage };
+    } else {
+      this.hazard(e.x, e.y, boss ? 145 : 100, 1.3, c.damage, "enemy", null);
+      e.pendingSummon = { at: this.t + 1.3, count: boss ? (rage ? 6 : 4) : 3 };
+    }
+    e.at = this.t + (boss ? (rage ? 3 : 4.2) : 5);
   }
   nearest(p, r = 750) {
     let target = null,
@@ -1032,19 +1085,25 @@ export class Game {
       this.event("boss_spawn", "BOŞLUK EFENDİSİ");
     }
     if (this.t >= this.spawnAt) {
-      const phase = Math.floor(this.t / 180),
-        pool = [
-          "rot",
-          "runner",
-          ...(phase >= 1 ? ["spitter", "burst"] : []),
-          ...(phase >= 2 ? ["armor", "mage", "hunter"] : []),
-        ];
+      const pool = ["rot", "rot", "runner",
+        ...(this.t >= 25 ? ["spitter"] : []),
+        ...(this.t >= 45 ? ["burst"] : []),
+        ...(this.t >= 95 ? ["hunter"] : []),
+        ...(this.t >= 135 ? ["mage"] : []),
+        ...(this.t >= 180 ? ["armor"] : []),
+      ];
       this.spawn(pool[Math.floor(this.rand() * pool.length)]);
-      this.spawnAt = this.t + Math.max(0.14, 1.25 - this.t / 650);
+      this.spawnAt = this.t + Math.max(0.22, 0.6 - this.t / 1000);
+    }
+    if (this.t >= (this.swarmAt ?? 24)) {
+      for (let i = 0; i < 5; i++) this.spawn(i % 2 ? "runner" : "rot");
+      this.swarmAt = this.t + 24;
+      this.event("swarm", "SÜRÜ GELİYOR!");
     }
     if (this.t >= this.eliteAt) {
       this.spawn("elite");
-      this.eliteAt = this.t + 105;
+      this.eliteAt = this.t + 95;
+      this.event("elite_spawn", "DİKEN MUHAFIZI · Miniboss yaklaşıyor!");
     }
     const alive = this.players.filter((p) => !p.dead);
     if (!alive.length) {
@@ -1181,65 +1240,29 @@ export class Game {
             { speed: 155, r: 9, life: 5 },
           );
           e.at = this.t + 2.4;
-        } else if (e.type === "mage" || e.type === "elite") {
-          this.hazard(
-            target.x,
-            target.y,
-            e.type === "elite" ? 100 : 75,
-            1.1,
-            c.damage,
-            "enemy",
-            null,
-          );
+        } else if (e.type === "mage") {
+          this.hazard(target.x, target.y, 75, 1.1, c.damage, "enemy", null);
           e.at = this.t + 3.5;
-        } else if (e.type === "boss") {
-          const phase = e.hp < e.maxHP * 0.5,
-            mode = Math.floor(this.rand() * 3);
-          if (mode === 0)
-            for (const p of alive)
-              this.hazard(
-                p.x,
-                p.y,
-                phase ? 120 : 95,
-                1.2,
-                c.damage,
-                "enemy",
-                null,
-              );
-          if (mode === 1) {
-            e.pendingCharge = {
-              dx,
-              dy,
-              at: this.t + 0.9,
-              until: this.t + 1.65,
-            };
-            this.event("charge", "", {
-              x: e.x,
-              y: e.y,
-              tx: target.x,
-              ty: target.y,
-            });
-          }
-          if (mode === 2)
-            for (let i = 0; i < (phase ? 9 : 6); i++) {
-              const a = (i * Math.PI * 2) / (phase ? 9 : 6);
-              this.projectile(
-                { id: null, x: e.x, y: e.y },
-                { x: e.x + Math.cos(a) * 100, y: e.y + Math.sin(a) * 100 },
-                "orb",
-                c.damage,
-                { speed: 90, r: 22, life: 7 },
-              );
-            }
-          if (phase)
-            for (let i = 0; i < 2; i++)
-              this.spawn(
-                "runner",
-                e.x + (this.rand() - 0.5) * 150,
-                e.y + (this.rand() - 0.5) * 150,
-              );
-          e.at = this.t + (phase ? 2.5 : 3.5);
+        } else if (e.type === "boss" || e.type === "elite") {
+          this.commanderAttack(e, target, alive);
         }
+      }
+      if (e.pendingVolley && this.t >= e.pendingVolley.at) {
+        const v = e.pendingVolley;
+        for (let i = 0; i < v.count; i++) {
+          const a = v.angle + (v.ring ? i * Math.PI * 2 / v.count : (i - 2) * 0.22);
+          this.projectile({ id: null, x: e.x, y: e.y },
+            { x: e.x + Math.cos(a) * 100, y: e.y + Math.sin(a) * 100 },
+            "orb", v.damage, { speed: v.ring ? 145 : 180, r: v.ring ? 12 : 8, life: 5 });
+        }
+        e.pendingVolley = null;
+      }
+      if (e.pendingSummon && this.t >= e.pendingSummon.at) {
+        for (let i = 0; i < e.pendingSummon.count; i++) {
+          const a = i * Math.PI * 2 / e.pendingSummon.count;
+          this.spawn(i % 2 ? "rot" : "runner", e.x + Math.cos(a) * 95, e.y + Math.sin(a) * 95);
+        }
+        e.pendingSummon = null;
       }
       if (e.pendingCharge && this.t >= e.pendingCharge.at) {
         if (this.t < e.pendingCharge.until) {
@@ -1591,6 +1614,7 @@ export class Game {
         dashIn: q(Math.max(0, p.dashAt - this.t)),
         activeIn: q(Math.max(0, p.activeAt - this.t)),
         immune: p.immuneUntil > this.t,
+        hurt: (p.hurtUntil || 0) > this.t,
       })),
       enemies: this.enemies.map((e) => ({
         id: e.id,
@@ -1604,6 +1628,13 @@ export class Game {
         wet: e.wetUntil > this.t,
         marked: e.markUntil > this.t,
         burn: e.burnUntil > this.t,
+        enraged: !!e.enraged,
+        cast: e.cast?.until > this.t ? e.cast.name : "",
+        charge: e.pendingCharge && this.t < e.pendingCharge.at ? {
+          tx: q(e.x + e.pendingCharge.dx * 420),
+          ty: q(e.y + e.pendingCharge.dy * 420),
+          left: q(e.pendingCharge.at - this.t),
+        } : null,
       })),
       bullets: this.bullets.map((b) => ({
         id: b.id,

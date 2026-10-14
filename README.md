@@ -4,13 +4,20 @@
 
 ## Doğrulama durumu
 
-- 28 otomatik kural / protokol / SQLite yaşam döngüsü testi geçti.
+- 35 otomatik kural / protokol / SQLite yaşam döngüsü testi geçti.
 - Yerel Wrangler 4.150.0 / workerd üzerinde HTTP ve gerçek WebSocket **101** ile 14 ağ kontrolü geçti. İki istemci aynı server tick’te aynı oyuncu/düşman durumunu aldı; güvenli reconnect ve oda sınırı doğrulandı.
 - `wrangler deploy --dry-run` başarılı: binding’ler, SQLite migration ve Static Assets build’i kabul edildi. Dry-run, canlı deploy değildir.
-- 2026-10-14: GitHub `zzzz019292/zzz-web-oyun` main dalındaki eski dosyalar yeni kaynaklarla değiştirildi. Cloudflare’da `last-bond` Worker sunucusu ve iki SQLite Durable Object namespace’i API üzerinden yayınlandı. **HTML Static Assets yüklemesi HTTP401 Unauthorized nedeniyle tamamlanmadı; oyun sitesi henüz oynanmaya hazır değildir.** Mevcut başka Worker değiştirilmedi.
-- Sunucu adresi: `https://last-bond.ahmet728kq.workers.dev`. Arayüz yüklenene kadar kök yol açık bir 503 mesajı gösterir. Bu ortamın dış HTTP erişim kısıtı nedeniyle canlı health/WS testi doğrulanamadı. Normal `npm run deploy`, GitHub kaynaklarından backend + HTML assets birlikte tamamlar.
-- Tarayıcı görsel kontrolü bu çalışma ortamında Chromium başlatma kısıtı nedeniyle tamamlanamadı; istemci JavaScript sözdizimi doğrulandı. İki farklı gerçek internet bağlantısından maç henüz doğrulanmadı. Cloudflare CPU, gerçek GB-s ve 60 FPS garantisi verilmez. Üretim kabul testi aşağıdadır.
+- Canlı adres: [LAST BOND](https://last-bond.ahmet728kq.workers.dev/). GitHub `main` Cloudflare Workers Builds'e bağlıdır; arayüz ASSETS binding'i ile yayınlanır. İlk yayın ve iki oyunculu lobi tarayıcıda doğrulandı.
+- v1.1 istemcisi bellek içi DOM/audio testleriyle; gerçek Canvas raster çıktısı ile sınıflar, canavarlar, çayır ve boss uyarıları kontrol edildi. Bu test gerçek tarayıcı veya hoparlörden dinleme yerine geçmez. İki farklı gerçek internet bağlantısından tam maç henüz doğrulanmadı.
 - `benchmark-result.json`: 900 saniye simüle edilmiş yerel Node yük testi; son 150 saniyede sentetik 450 projectile sınır stresi; 150 düşman, iki build, ölçülmüş tick süreleri ve sınırlı entity/pool sayıları. Bu test gerçek zamanlı 15 dakikalık internet maçı veya Cloudflare profili değildir.
+
+## v1.1 — Çayır kuşatması
+
+- Pixel sprite karakterler; goblin, koşucu, tükürücü, patlayan mantar, zırhlı, büyücü, avcı, boynuzlu Diken Muhafızı ve büyük Boşluk Efendisi. Çimen, çiçek, taş, patika ve sınır ormanı; ahşap/orman renklerinde arayüz.
+- Başlangıçta güvenli mesafede on düşman. Takviye aralığı 1,25 sn yerine 0,60 sn'den başlar, zamanla 0,22 sn'ye iner. Her 24 sn beş ek düşman; sert entity sınırları korunur.
+- Tükürücü 25 sn, Patlak 45 sn, Avcı 95 sn, Büyücü 135 sn, Zırhlı 180 sn'den itibaren havuza girer. İlk miniboss 70 sn, sonraki minibosslar 95 sn arayla; final boss 12. dakikada.
+- Her yaşayan karakterin üstünde can barı; 0,32 sn kırmızı hasar sprite'ı ve hasar sayısı. Kendi hasarında kısa 8-bit darbe sesi; arkadaşın hasarı bunu tetiklemez. Ses ayarı korunur, kullanıcı etkileşimi AudioContext'i açar.
+- Miniboss: önceden işaretlenmiş ezme alanı, beş tohumlu salvo, sürü çağrısı. Final boss: kök kırılması, bir saniye çizgili hücum uyarısı, gecikmeli diken çemberi, alan saldırısıyla çağrı. %50 HP altında ikinci evre: ek kök alanları, daha çok diken/çağrı ve daha kısa döngü.
 
 ## İlk kurulum: ücretsiz hesap ve deploy
 
@@ -177,7 +184,7 @@ Cloudflare üretimde `performance.now()` / `Date.now()` yalnızca I/O sonrasınd
 Bu çalışan kaynak sürümü bütün temel online mekanikleri uygular; aşağıdaki öğeler tam ürün kalitesi olarak iddia edilmez:
 
 - Rarity renkleri/sunum vardır; ayrı rarity hasar çarpanları yoktur. Seçimlerin davranışı weapon/passive türü ve seviye ile değişir.
-- Özgün görseller prosedürel geometrik silüetlerdir; elle çizilmiş profesyonel pixel-art değildir. Müzik soundtrack’i yoktur, sentezlenmiş efektler vardır.
+- Sınıflar ve dokuz düşman türü kod içinde çizilmiş pixel sprite kullanır; çayır karo desenleri ve efektler Canvas üzerinde üretilir. Müzik soundtrack’i yoktur, sentezlenmiş efektler vardır.
 - Gölge pasifi zayıflatılmış hedefte uygulanır; yönsel arkadan vuruş modeli yoktur. Temel silah levelleri veri tabanlı katsayı/attack-count ile ilerler; her silaha ayrı beş özel animasyon yoktur.
 - Arı Sürüsü bağımsız kalıcı AI pet değil, homing sürü projectile’dır. Ses tonu saldırı olaylarıyla sentezlenir; her silah için ayrı uzun ses tasarımı yapılmadı.
 - Nadir elit ödülü anında açılır; yerde fiziksel sandık açma etkileşimi yoktur. Evre/boss girişinde bildirim ve efekt vardır; sinematik cutscene yoktur.

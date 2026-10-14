@@ -1,17 +1,23 @@
 # LAST BOND — doğrulama raporu
 
-Tarih: 2026-10-13. Kaynak v1.0.0. Wrangler 4.150.0; Node v24.19.0.
+Tarih: 2026-10-14. Kaynak v1.1.0. Wrangler 4.150.0; Node v24.19.0.
 
 | Kontrol                         | Sonuç         | Kapsam                                                                                                      |
 | ------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------- |
-| `npm test`                      | 28/28 geçti   | Oyun kuralları, protokol, gerçek SQLite ile DO lifecycle; Cloudflare base class / socket fixture kullanılır |
+| `npm test`                      | 35/35 geçti   | Oyun kuralları, protokol, gerçek SQLite ile DO lifecycle; Cloudflare base class / socket fixture kullanılır |
 | Yerel WebSocket network testi   | 14/14 geçti   | Gerçek Wrangler/workerd, HTTP ve WebSocket101; iki istemcide aynı tick ve dünya                             |
 | `npm run check:deploy`          | Başarılı      | Wrangler dry-run; gerçek yayın değildir                                                                     |
 | İstemci JavaScript parse        | Başarılı      | Tüm gömülü JS derlenebilir; görsel render doğrulaması değildir                                              |
 | 18.000 tick yerel yük testi     | Başarılı      | 900 sn simüle zaman; iki build / 150 düşman; son 150 sn sentetik450 mermi stresi                            |
-| Chromium görsel / etkileşim QA  | Tamamlanamadı | Çalışma ortamında Chromium SIGTRAP / başlatma sorunu; görsel hata yoktur iddiası yapılmaz                   |
-| Canlı Cloudflare publish        | Tamamlanamadı | 2026-10-14 sunucu + SQLite DO API deploy başarılı; HTML Static Assets HTTP401 nedeniyle bekliyor                                      |
+| Chromium görsel / etkileşim QA  | Tamamlanamadı | Yerel Chromium başlatılamadı; gerçek Canvas çıktısı görsel incelendi, DOM/audio adapter ile istemci akışları test edildi                   |
+| Canlı Cloudflare publish | v1.0 yayında | GitHub bağlantılı Workers Builds; ASSETS ile arayüz ve iki oyunculu lobi doğrulandı. v1.1 aynı hat üzerinden yayınlanır. |
 | İki ayrı gerçek internetten maç | Yapılmadı     | Üretim kabul testi halen gerekli                                                                            |
+
+## v1.1 regresyon kontrolleri
+
+Güvenli on düşmanlık açılış; ilk dakikada yoğunluk ve tükürücü/patlak çeşitliliği; 70 sn miniboss; hasarın uyarıdan erken gelmemesi; boss'un dört saldırı döngüsü, gecikmeli hücum/çember/çağrı, ikinci evre ve checkpoint; küçük hasarda oyuncu kimliği/kırmızı sprite, kalkan ve dokunulmazlığın hasar üretmemesi.
+
+İstemci adapter testleri: parçacıklar kapalıyken hasar rengi/sesi; kendi hasarı ile arkadaşın hasarının ayrılması; sessiz ayar ve olay tekrarını engelleme; her sınıf/düşmanın iki kalite modunda render edilmesi; hücum uyarısının görünmesi. Ses node ve parametreleri doğrulandı, gerçek hoparlörden dinlenmedi. Canvas çıktısında arena, sprite galerisi ve menü posteri incelendi.
 
 ## Oyun / lifecycle test kapsamı
 
@@ -25,7 +31,7 @@ Health, aynı-origin tek HTML, güvenli altı karakterli kod / kurucu token, iki
 
 ## Ölçüm
 
-`benchmark-result.json` tekrar üretilebilir ham sonuçları içerir. Bu çalıştırmada 150 düşman / en fazla450 projectile; tick ortalaması yaklaşık0,44ms, p95 yaklaşık0,93ms, p99 yaklaşık1,59ms. En yavaş tick yaklaşık21,94ms. Heap tepe yaklaşık43,9MiB. Full snapshot ortalaması yaklaşık32,6kB, delta ortalaması27,0kB. CPU ölçümü yerel Node içindir; Cloudflare Dashboard CPU/GB-s ölçümü yerine geçmez. Üretimde performance.now I/O aralarında donabileceği için uygulama içi CPU sayacı garanti değildir; scheduler sapması ayrıca raporlanır.
+`benchmark-result.json` tekrar üretilebilir ham sonuçları içerir. v1.0 çalıştırmasında 150 düşman / en fazla450 projectile; tick ortalaması yaklaşık0,44ms, p95 yaklaşık0,93ms, p99 yaklaşık1,59ms. En yavaş tick yaklaşık21,94ms. Heap tepe yaklaşık43,9MiB. Full snapshot ortalaması yaklaşık32,6kB, delta ortalaması27,0kB. CPU ölçümü yerel Node içindir; Cloudflare Dashboard CPU/GB-s ölçümü yerine geçmez. Üretimde performance.now I/O aralarında donabileceği için uygulama içi CPU sayacı garanti değildir; scheduler sapması ayrıca raporlanır.
 
 Bu ölçüm otomatik bot build’leri, yapay dayanıklı düşmanlar, hasar bağışıklığı, XP pause engelleme ve sentetik projectile doyurma içerir. İnsanların 15dk oynadığı bir denge / performans kabul testi değildir. Bellek ve entity sayıları bounded olsa da bu tek çalıştırma her koşulda sızıntısızlık kanıtı değildir.
 

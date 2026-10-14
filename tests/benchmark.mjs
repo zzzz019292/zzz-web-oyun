@@ -5,6 +5,8 @@ const g = new Game(333);
 const p = g.addPlayer("a", "A", "storm"),
   q = g.addPlayer("b", "B", "alchemist");
 g.start();
+g.enemies = [];
+g.swarmAt = 1e9;
 g.spawnAt = 1e9;
 g.eliteAt = 1e9;
 g.t = 400;
